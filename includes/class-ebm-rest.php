@@ -157,7 +157,8 @@ final class EBM_REST {
 		global $wpdb;
 
 		$job_id = absint( $request->get_param( 'job_id' ) );
-		$job    = $wpdb->get_row(
+
+		$job = $wpdb->get_row(
 			$wpdb->prepare(
 				'SELECT * FROM ' . EBM_Helpers::table( 'jobs' ) . ' WHERE id = %d AND is_active = 1',
 				$job_id
@@ -202,16 +203,16 @@ final class EBM_REST {
 		$deposit = EBM_Scheduler::deposit( $job, $total );
 
 		return array(
-			'original_total'   => round( $original_total, 2 ),
-			'total'            => round( $total, 2 ),
-			'total_amount'     => round( $total, 2 ),
-			'deposit'          => round( $deposit, 2 ),
-			'deposit_amount'   => round( $deposit, 2 ),
-			'balance'          => round( $total - $deposit, 2 ),
-			'balance_amount'   => round( $total - $deposit, 2 ),
-			'voucher_code'     => $voucher_code,
-			'discount_id'      => $discount_id,
-			'discount_amount'  => round( $discount_amount, 2 ),
+			'original_total'  => round( $original_total, 2 ),
+			'total'           => round( $total, 2 ),
+			'total_amount'    => round( $total, 2 ),
+			'deposit'         => round( $deposit, 2 ),
+			'deposit_amount'  => round( $deposit, 2 ),
+			'balance'         => round( $total - $deposit, 2 ),
+			'balance_amount'  => round( $total - $deposit, 2 ),
+			'voucher_code'    => $voucher_code,
+			'discount_id'     => $discount_id,
+			'discount_amount' => round( $discount_amount, 2 ),
 		);
 	}
 
@@ -228,7 +229,8 @@ final class EBM_REST {
 		global $wpdb;
 
 		$job_id = absint( $request->get_param( 'job_id' ) );
-		$job    = $wpdb->get_row(
+
+		$job = $wpdb->get_row(
 			$wpdb->prepare(
 				'SELECT * FROM ' . EBM_Helpers::table( 'jobs' ) . ' WHERE id = %d AND is_active = 1',
 				$job_id
@@ -307,8 +309,10 @@ final class EBM_REST {
 			$total           = max( 0, round( $total - $discount_amount, 2 ) );
 		}
 
-		$deposit = EBM_Scheduler::deposit( $job, $total );
-		$now     = current_time( 'mysql' );
+		$deposit        = EBM_Scheduler::deposit( $job, $total );
+		$balance        = round( $total - $deposit, 2 );
+		$now            = current_time( 'mysql' );
+		$initial_status = $deposit > 0 ? 'pending_payment' : 'confirmed';
 
 		$customers_table      = EBM_Helpers::table( 'customers' );
 		$existing_customer_id = (int) $wpdb->get_var(
@@ -354,50 +358,45 @@ final class EBM_REST {
 
 		$bookings_table = EBM_Helpers::table( 'bookings' );
 
-		$booking_data = array(
-			'public_token'       => EBM_Helpers::token(),
-			'job_id'             => $job_id,
-			'customer_id'        => $customer_id,
-			'status'             => $deposit > 0 ? 'pending_payment' : 'confirmed',
-			'start_at'           => $segments[0]['start_at'],
-			'end_at'             => end( $segments )['end_at'],
-			'total_minutes'      => $duration,
-			'total_amount'       => $total,
-			'deposit_amount'     => $deposit,
-			'balance_amount'     => round( $total - $deposit, 2 ),
-			'addons_json'        => wp_json_encode( $addons ),
-			'custom_fields_json' => wp_json_encode( array_map( 'sanitize_text_field', (array) $request->get_param( 'custom_fields' ) ) ),
-			'created_at'         => $now,
-			'updated_at'         => $now,
-		);
-
-		$booking_formats = array(
-			'%s',
-			'%d',
-			'%d',
-			'%s',
-			'%s',
-			'%s',
-			'%d',
-			'%f',
-			'%f',
-			'%f',
-			'%s',
-			'%s',
-			'%s',
-			'%s',
-		);
-
-		/*
-		 * Future schema upgrade:
-		 * We should add discount_id, voucher_code, original_total_amount and discount_amount columns
-		 * to the bookings table. For now, the discount is safely applied to totals before payment.
-		 */
-
 		$wpdb->insert(
 			$bookings_table,
-			$booking_data,
-			$booking_formats
+			array(
+				'public_token'       => EBM_Helpers::token(),
+				'job_id'             => $job_id,
+				'customer_id'        => $customer_id,
+				'status'             => $initial_status,
+				'start_at'           => $segments[0]['start_at'],
+				'end_at'             => end( $segments )['end_at'],
+				'total_minutes'      => $duration,
+				'total_amount'       => $total,
+				'deposit_amount'     => $deposit,
+				'balance_amount'     => $balance,
+				'addons_json'        => wp_json_encode( $addons ),
+				'custom_fields_json' => wp_json_encode(
+					array_map(
+						'sanitize_text_field',
+						(array) $request->get_param( 'custom_fields' )
+					)
+				),
+				'created_at'         => $now,
+				'updated_at'         => $now,
+			),
+			array(
+				'%s',
+				'%d',
+				'%d',
+				'%s',
+				'%s',
+				'%s',
+				'%d',
+				'%f',
+				'%f',
+				'%f',
+				'%s',
+				'%s',
+				'%s',
+				'%s',
+			)
 		);
 
 		$booking_id = (int) $wpdb->insert_id;
@@ -424,29 +423,35 @@ final class EBM_REST {
 			);
 		}
 
-		if ( $discount_id && class_exists( 'EBM_Discounts' ) ) {
-			EBM_Discounts::increment_usage( $discount_id );
-		}
+		/*
+		 * Important payment lifecycle:
+		 * Paid bookings stay local as pending_payment.
+		 * They are not written to Google until Stripe confirms payment.
+		 * Free bookings are confirmed immediately and can be written to Google now.
+		 */
+		if ( $deposit <= 0 ) {
+			if ( $discount_id && class_exists( 'EBM_Discounts' ) ) {
+				EBM_Discounts::increment_usage( $discount_id );
+			}
 
-		if ( class_exists( 'EBM_Google' ) && EBM_Google::connected() ) {
-			EBM_Google::create_event( $booking_id );
-		}
+			if ( class_exists( 'EBM_Google' ) && EBM_Google::connected() ) {
+				EBM_Google::create_event( $booking_id );
+			}
 
-if ( $deposit <= 0 ) {
-	return array(
-		'booking_id'       => $booking_id,
-		'checkout_url'     => '',
-		'payment_required' => false,
-		'message'          => __( 'Booking confirmed. No payment is due.', 'electrical-booking-manager' ),
-		'voucher_code'     => $voucher_code,
-		'discount_id'      => $discount_id,
-		'discount_amount'  => round( $discount_amount, 2 ),
-		'original_total'   => round( $original_total, 2 ),
-		'total'            => round( $total, 2 ),
-		'deposit'          => round( $deposit, 2 ),
-		'balance'          => round( $total - $deposit, 2 ),
-	);
-}
+			return array(
+				'booking_id'        => $booking_id,
+				'checkout_url'      => '',
+				'payment_required'  => false,
+				'message'           => __( 'Booking confirmed. No payment is due.', 'electrical-booking-manager' ),
+				'voucher_code'      => $voucher_code,
+				'discount_id'       => $discount_id,
+				'discount_amount'   => round( $discount_amount, 2 ),
+				'original_total'    => round( $original_total, 2 ),
+				'total'             => round( $total, 2 ),
+				'deposit'           => round( $deposit, 2 ),
+				'balance'           => round( $balance, 2 ),
+			);
+		}
 
 		$session = EBM_Stripe::checkout( $booking_id, $deposit, 'deposit' );
 
@@ -469,7 +474,7 @@ if ( $deposit <= 0 ) {
 			'original_total'   => round( $original_total, 2 ),
 			'total'            => round( $total, 2 ),
 			'deposit'          => round( $deposit, 2 ),
-			'balance'          => round( $total - $deposit, 2 ),
+			'balance'          => round( $balance, 2 ),
 		);
 	}
 }

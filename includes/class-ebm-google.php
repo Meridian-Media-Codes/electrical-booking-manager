@@ -453,4 +453,74 @@ final class EBM_Google {
 
 		return $events;
 	}
+
+		public static function delete_event( $event_id ) {
+		if ( ! self::connected() ) {
+			return false;
+		}
+
+		$event_id = sanitize_text_field( $event_id );
+
+		if ( '' === $event_id ) {
+			return false;
+		}
+
+		$token = self::token();
+
+		if ( ! $token ) {
+			return false;
+		}
+
+		$calendar_id = rawurlencode( EBM_Settings::get( 'google_calendar_id', 'primary' ) );
+
+		$response = wp_remote_request(
+			'https://www.googleapis.com/calendar/v3/calendars/' . $calendar_id . '/events/' . rawurlencode( $event_id ),
+			array(
+				'method'  => 'DELETE',
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $token,
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return false;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+
+		self::clear_google_event_cache();
+
+		return in_array( $code, array( 200, 204, 410, 404 ), true );
+	}
+
+	public static function recreate_event( $booking_id ) {
+		global $wpdb;
+
+		$booking = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM ' . EBM_Helpers::table( 'bookings' ) . ' WHERE id = %d',
+				absint( $booking_id )
+			)
+		);
+
+		if ( ! $booking ) {
+			return '';
+		}
+
+		if ( ! empty( $booking->google_event_id ) ) {
+			self::delete_event( $booking->google_event_id );
+
+			$wpdb->update(
+				EBM_Helpers::table( 'bookings' ),
+				array( 'google_event_id' => '' ),
+				array( 'id' => absint( $booking_id ) ),
+				array( '%s' ),
+				array( '%d' )
+			);
+		}
+
+		return self::create_event( absint( $booking_id ) );
+	}
 }
