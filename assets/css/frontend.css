@@ -723,3 +723,42 @@
 		max-width: none;
 	}
 }
+
+.ebm-voucher-box {
+	margin: 0 0 24px;
+	padding: 18px;
+	background: #f7f9fc;
+	border: 1px solid var(--ebm-line);
+	border-radius: var(--ebm-radius-lg);
+}
+
+.ebm-voucher-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 10px;
+	align-items: end;
+}
+
+.ebm-voucher-row input {
+	text-transform: uppercase;
+}
+
+.ebm-voucher-message {
+	margin-top: 10px;
+	font-size: 14px;
+	font-weight: 750;
+}
+
+.ebm-voucher-message:empty {
+	display: none;
+}
+
+@media (max-width: 640px) {
+	.ebm-voucher-row {
+		grid-template-columns: 1fr;
+	}
+
+	.ebm-voucher-row .ebm-btn {
+		width: 100%;
+	}
+}

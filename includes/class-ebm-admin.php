@@ -8,11 +8,29 @@ final class EBM_Admin {
 		add_action( 'admin_menu', array( __CLASS__, 'menu' ) );
 		add_action( 'admin_enqueue_scripts', array( __CLASS__, 'assets' ) );
 
-		EBM_Admin_Settings::init();
-		EBM_Admin_Bookings::init();
-		EBM_Admin_Calendar::init();
-		EBM_Admin_Customers::init();
-		EBM_Admin_Jobs::init();
+		if ( class_exists( 'EBM_Admin_Settings' ) ) {
+			EBM_Admin_Settings::init();
+		}
+
+		if ( class_exists( 'EBM_Admin_Bookings' ) ) {
+			EBM_Admin_Bookings::init();
+		}
+
+		if ( class_exists( 'EBM_Admin_Calendar' ) ) {
+			EBM_Admin_Calendar::init();
+		}
+
+		if ( class_exists( 'EBM_Admin_Customers' ) ) {
+			EBM_Admin_Customers::init();
+		}
+
+		if ( class_exists( 'EBM_Admin_Jobs' ) ) {
+			EBM_Admin_Jobs::init();
+		}
+
+		if ( class_exists( 'EBM_Admin_Discounts' ) ) {
+			EBM_Admin_Discounts::init();
+		}
 	}
 
 	public static function menu() {
@@ -64,6 +82,15 @@ final class EBM_Admin {
 
 		add_submenu_page(
 			'ebm-bookings',
+			__( 'Discounts', 'electrical-booking-manager' ),
+			__( 'Discounts', 'electrical-booking-manager' ),
+			'manage_options',
+			'ebm-discounts',
+			array( 'EBM_Admin_Discounts', 'render' )
+		);
+
+		add_submenu_page(
+			'ebm-bookings',
 			__( 'Settings', 'electrical-booking-manager' ),
 			__( 'Settings', 'electrical-booking-manager' ),
 			'manage_options',
@@ -79,8 +106,47 @@ final class EBM_Admin {
 			return;
 		}
 
-		wp_enqueue_style( 'ebm-admin', EBM_URL . 'assets/css/admin.css', array(), EBM_VERSION );
-		wp_enqueue_script( 'ebm-admin', EBM_URL . 'assets/js/admin.js', array(), EBM_VERSION, true );
+		wp_enqueue_style(
+			'ebm-admin',
+			EBM_URL . 'assets/css/admin.css',
+			array(),
+			self::asset_version( 'assets/css/admin.css' )
+		);
+
+		wp_enqueue_script(
+			'ebm-admin',
+			EBM_URL . 'assets/js/admin.js',
+			array(),
+			self::asset_version( 'assets/js/admin.js' ),
+			true
+		);
+	}
+
+	public static function enqueue_admin_assets() {
+		wp_enqueue_style(
+			'ebm-admin',
+			EBM_URL . 'assets/css/admin.css',
+			array(),
+			self::asset_version( 'assets/css/admin.css' )
+		);
+
+		wp_enqueue_script(
+			'ebm-admin',
+			EBM_URL . 'assets/js/admin.js',
+			array(),
+			self::asset_version( 'assets/js/admin.js' ),
+			true
+		);
+	}
+
+	private static function asset_version( $relative_path ) {
+		$path = EBM_DIR . ltrim( $relative_path, '/' );
+
+		if ( file_exists( $path ) ) {
+			return (string) filemtime( $path );
+		}
+
+		return defined( 'EBM_VERSION' ) ? EBM_VERSION : '1.0.0';
 	}
 
 	public static function cap() {
@@ -130,9 +196,15 @@ final class EBM_Admin {
 	public static function duration_unit_select( $name, $selected ) {
 		?>
 		<select name="<?php echo esc_attr( $name ); ?>">
-			<option value="minutes" <?php selected( $selected, 'minutes' ); ?>><?php esc_html_e( 'Minutes', 'electrical-booking-manager' ); ?></option>
-			<option value="hours" <?php selected( $selected, 'hours' ); ?>><?php esc_html_e( 'Hours', 'electrical-booking-manager' ); ?></option>
-			<option value="days" <?php selected( $selected, 'days' ); ?>><?php esc_html_e( 'Days', 'electrical-booking-manager' ); ?></option>
+			<option value="minutes" <?php selected( $selected, 'minutes' ); ?>>
+				<?php esc_html_e( 'Minutes', 'electrical-booking-manager' ); ?>
+			</option>
+			<option value="hours" <?php selected( $selected, 'hours' ); ?>>
+				<?php esc_html_e( 'Hours', 'electrical-booking-manager' ); ?>
+			</option>
+			<option value="days" <?php selected( $selected, 'days' ); ?>>
+				<?php esc_html_e( 'Days', 'electrical-booking-manager' ); ?>
+			</option>
 		</select>
 		<?php
 	}
@@ -142,14 +214,25 @@ final class EBM_Admin {
 
 		if ( $minutes >= 1440 && 0 === $minutes % 1440 ) {
 			$days = $minutes / 1440;
-			return sprintf( _n( '%d day', '%d days', $days, 'electrical-booking-manager' ), $days );
+
+			return sprintf(
+				_n( '%d day', '%d days', $days, 'electrical-booking-manager' ),
+				$days
+			);
 		}
 
 		if ( $minutes >= 60 && 0 === $minutes % 60 ) {
 			$hours = $minutes / 60;
-			return sprintf( _n( '%d hour', '%d hours', $hours, 'electrical-booking-manager' ), $hours );
+
+			return sprintf(
+				_n( '%d hour', '%d hours', $hours, 'electrical-booking-manager' ),
+				$hours
+			);
 		}
 
-		return sprintf( _n( '%d minute', '%d minutes', $minutes, 'electrical-booking-manager' ), $minutes );
+		return sprintf(
+			_n( '%d minute', '%d minutes', $minutes, 'electrical-booking-manager' ),
+			$minutes
+		);
 	}
 }
