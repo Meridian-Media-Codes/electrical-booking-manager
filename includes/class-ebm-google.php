@@ -18,6 +18,16 @@ final class EBM_Google {
 		return '' !== EBM_Settings::get( 'google_refresh_token', '' );
 	}
 
+	private static function google_datetime( $datetime ) {
+		$timestamp = strtotime( $datetime );
+
+		if ( ! $timestamp ) {
+			return '';
+		}
+
+		return gmdate( 'Y-m-d\TH:i:s\Z', $timestamp );
+	}
+
 	public static function connect() {
 		if ( ! current_user_can( 'manage_options' ) || ! check_admin_referer( 'ebm_google_connect' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'electrical-booking-manager' ) );
@@ -37,7 +47,7 @@ final class EBM_Google {
 				'client_id'              => $client_id,
 				'redirect_uri'           => self::redirect_uri(),
 				'response_type'          => 'code',
-				'scope'                  => 'https://www.googleapis.com/auth/calendar.events',
+				'scope'                  => 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
 				'access_type'            => 'offline',
 				'prompt'                 => 'consent',
 				'include_granted_scopes' => 'true',
@@ -207,10 +217,17 @@ final class EBM_Google {
 		$calendar_id = rawurlencode( EBM_Settings::get( 'google_calendar_id', 'primary' ) );
 
 		foreach ( $segments as $segment ) {
+			$time_min = self::google_datetime( $segment['start_at'] );
+			$time_max = self::google_datetime( $segment['end_at'] );
+
+			if ( '' === $time_min || '' === $time_max ) {
+				return true;
+			}
+
 			$url = add_query_arg(
 				array(
-					'timeMin'      => gmdate( 'c', strtotime( $segment['start_at'] ) ),
-					'timeMax'      => gmdate( 'c', strtotime( $segment['end_at'] ) ),
+					'timeMin'      => $time_min,
+					'timeMax'      => $time_max,
 					'singleEvents' => 'true',
 				),
 				'https://www.googleapis.com/calendar/v3/calendars/' . $calendar_id . '/events'
@@ -270,11 +287,24 @@ final class EBM_Google {
 			return '';
 		}
 
+		$start = self::google_datetime( $booking->start_at );
+		$end   = self::google_datetime( $booking->end_at );
+
+		if ( '' === $start || '' === $end ) {
+			return '';
+		}
+
 		$event = array(
 			'summary'     => 'Booking: ' . $booking->job_title,
 			'description' => "Customer: {$booking->name}\nEmail: {$booking->email}\nPhone: {$booking->phone}\nAddress: {$booking->address}",
-			'start'       => array( 'dateTime' => gmdate( 'c', strtotime( $booking->start_at ) ) ),
-			'end'         => array( 'dateTime' => gmdate( 'c', strtotime( $booking->end_at ) ) ),
+			'start'       => array(
+				'dateTime' => $start,
+				'timeZone' => 'UTC',
+			),
+			'end'         => array(
+				'dateTime' => $end,
+				'timeZone' => 'UTC',
+			),
 		);
 
 		$response = wp_remote_post(
@@ -320,12 +350,22 @@ final class EBM_Google {
 			);
 		}
 
+		$formatted_min = self::google_datetime( $time_min );
+		$formatted_max = self::google_datetime( $time_max );
+
+		if ( '' === $formatted_min || '' === $formatted_max ) {
+			return new WP_Error(
+				'ebm_google_bad_time',
+				__( 'The calendar date range could not be formatted for Google.', 'electrical-booking-manager' )
+			);
+		}
+
 		$calendar_id = rawurlencode( EBM_Settings::get( 'google_calendar_id', 'primary' ) );
 
 		$url = add_query_arg(
 			array(
-				'timeMin'      => gmdate( 'c', strtotime( $time_min ) ),
-				'timeMax'      => gmdate( 'c', strtotime( $time_max ) ),
+				'timeMin'      => $formatted_min,
+				'timeMax'      => $formatted_max,
 				'singleEvents' => 'true',
 				'orderBy'      => 'startTime',
 			),
