@@ -358,7 +358,7 @@ final class EBM_REST {
 			'public_token'       => EBM_Helpers::token(),
 			'job_id'             => $job_id,
 			'customer_id'        => $customer_id,
-			'status'             => 'pending_payment',
+			'status'             => $deposit > 0 ? 'pending_payment' : 'confirmed',
 			'start_at'           => $segments[0]['start_at'],
 			'end_at'             => end( $segments )['end_at'],
 			'total_minutes'      => $duration,
@@ -432,6 +432,22 @@ final class EBM_REST {
 			EBM_Google::create_event( $booking_id );
 		}
 
+if ( $deposit <= 0 ) {
+	return array(
+		'booking_id'       => $booking_id,
+		'checkout_url'     => '',
+		'payment_required' => false,
+		'message'          => __( 'Booking confirmed. No payment is due.', 'electrical-booking-manager' ),
+		'voucher_code'     => $voucher_code,
+		'discount_id'      => $discount_id,
+		'discount_amount'  => round( $discount_amount, 2 ),
+		'original_total'   => round( $original_total, 2 ),
+		'total'            => round( $total, 2 ),
+		'deposit'          => round( $deposit, 2 ),
+		'balance'          => round( $total - $deposit, 2 ),
+	);
+}
+
 		$session = EBM_Stripe::checkout( $booking_id, $deposit, 'deposit' );
 
 		if ( is_wp_error( $session ) ) {
@@ -446,6 +462,7 @@ final class EBM_REST {
 		return array(
 			'booking_id'       => $booking_id,
 			'checkout_url'     => esc_url_raw( $session['url'] ?? '' ),
+			'payment_required' => true,
 			'voucher_code'     => $voucher_code,
 			'discount_id'      => $discount_id,
 			'discount_amount'  => round( $discount_amount, 2 ),
