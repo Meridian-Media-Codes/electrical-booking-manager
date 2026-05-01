@@ -19,13 +19,33 @@ final class EBM_Google {
 	}
 
 	private static function google_datetime( $datetime ) {
-		$timestamp = strtotime( $datetime );
-
-		if ( ! $timestamp ) {
+		try {
+			$date = new DateTimeImmutable( (string) $datetime, wp_timezone() );
+		} catch ( Exception $e ) {
 			return '';
 		}
 
-		return gmdate( 'Y-m-d\TH:i:s\Z', $timestamp );
+		return $date->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d\TH:i:s\Z' );
+	}
+
+	private static function google_local_datetime( $datetime ) {
+		try {
+			$date = new DateTimeImmutable( (string) $datetime, wp_timezone() );
+		} catch ( Exception $e ) {
+			return '';
+		}
+
+		return $date->format( 'Y-m-d\TH:i:s' );
+	}
+
+	private static function google_timezone() {
+		$timezone = wp_timezone_string();
+
+		if ( ! $timezone ) {
+			$timezone = 'Europe/London';
+		}
+
+		return $timezone;
 	}
 
 	private static function clear_google_event_cache() {
@@ -309,8 +329,8 @@ final class EBM_Google {
 			return '';
 		}
 
-		$start = self::google_datetime( $booking->start_at );
-		$end   = self::google_datetime( $booking->end_at );
+		$start = self::google_local_datetime( $booking->start_at );
+		$end   = self::google_local_datetime( $booking->end_at );
 
 		if ( '' === $start || '' === $end ) {
 			return '';
@@ -321,11 +341,11 @@ final class EBM_Google {
 			'description' => "Customer: {$booking->name}\nEmail: {$booking->email}\nPhone: {$booking->phone}\nAddress: {$booking->address}",
 			'start'       => array(
 				'dateTime' => $start,
-				'timeZone' => 'UTC',
+				'timeZone' => self::google_timezone(),
 			),
 			'end'         => array(
 				'dateTime' => $end,
-				'timeZone' => 'UTC',
+				'timeZone' => self::google_timezone(),
 			),
 		);
 
