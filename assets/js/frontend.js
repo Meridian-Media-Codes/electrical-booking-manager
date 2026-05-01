@@ -1,6 +1,13 @@
 (function () {
 	'use strict';
 
+	const memoryCache = {
+		jobs: null,
+		addons: {},
+		slots: {},
+		quotes: {},
+	};
+
 	function createInitialState() {
 		return {
 			step: 1,
@@ -63,6 +70,8 @@
 		return {
 			restUrl: config.restUrl || '/wp-json/ebm/v1/',
 			nonce: config.nonce || '',
+			preloadedJobs: Array.isArray(config.preloadedJobs) ? config.preloadedJobs : [],
+			cacheVersion: config.cacheVersion || '1',
 		};
 	}
 
@@ -94,6 +103,10 @@
 		}
 
 		return body;
+	}
+
+	function cacheKey(prefix, data) {
+		return prefix + ':' + JSON.stringify(data);
 	}
 
 	function createButton(text, className, type = 'button') {
@@ -227,53 +240,80 @@
 		return `${total} Minutes`;
 	}
 
+	function renderJobs(app, state, target, list) {
+		target.innerHTML = '';
+
+		if (!list.length) {
+			target.innerHTML = '<div class="ebm-empty">No jobs are available yet.</div>';
+			return;
+		}
+
+		list.forEach(function (job) {
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = 'ebm-job-card';
+			button.dataset.jobId = job.id;
+			button.innerHTML = `
+				<span class="ebm-job-title">${escapeHtml(job.title || job.name || 'Job')}</span>
+				<span class="ebm-job-meta">${durationLabel(job.duration_minutes || job.duration || 0)}</span>
+			`;
+
+			button.addEventListener('click', async function () {
+				state.jobId = Number(job.id);
+				state.addons = {};
+				state.date = '';
+				state.time = '';
+				state.slots = [];
+				state.quote = null;
+
+				qsa('.ebm-job-card', target).forEach(function (card) {
+					card.classList.remove('is-selected');
+					card.setAttribute('aria-pressed', 'false');
+				});
+
+				button.classList.add('is-selected');
+				button.setAttribute('aria-pressed', 'true');
+
+				clearMessage(app);
+				await loadAddons(app, state);
+				goToStep(app, state, 2);
+			});
+
+			target.appendChild(button);
+		});
+	}
+
 	async function loadJobs(app, state, target) {
+		const config = getConfig();
+
+		if (memoryCache.jobs && memoryCache.jobs.length) {
+			renderJobs(app, state, target, memoryCache.jobs);
+			return;
+		}
+
+		if (config.preloadedJobs.length) {
+			memoryCache.jobs = config.preloadedJobs;
+			renderJobs(app, state, target, memoryCache.jobs);
+
+			api('jobs')
+				.then(function (jobs) {
+					const list = Array.isArray(jobs) ? jobs : (jobs.jobs || []);
+					if (list.length) {
+						memoryCache.jobs = list;
+					}
+				})
+				.catch(function () {});
+
+			return;
+		}
+
 		target.innerHTML = '<div class="ebm-loading">Loading jobs...</div>';
 
 		try {
 			const jobs = await api('jobs');
 			const list = Array.isArray(jobs) ? jobs : (jobs.jobs || []);
-
-			if (!list.length) {
-				target.innerHTML = '<div class="ebm-empty">No jobs are available yet.</div>';
-				return;
-			}
-
-			target.innerHTML = '';
-
-			list.forEach(function (job) {
-				const button = document.createElement('button');
-				button.type = 'button';
-				button.className = 'ebm-job-card';
-				button.dataset.jobId = job.id;
-				button.innerHTML = `
-					<span class="ebm-job-title">${escapeHtml(job.title || job.name || 'Job')}</span>
-					<span class="ebm-job-meta">${durationLabel(job.duration_minutes || job.duration || 0)}</span>
-				`;
-
-				button.addEventListener('click', async function () {
-					state.jobId = Number(job.id);
-					state.addons = {};
-					state.date = '';
-					state.time = '';
-					state.slots = [];
-					state.quote = null;
-
-					qsa('.ebm-job-card', target).forEach(function (card) {
-						card.classList.remove('is-selected');
-						card.setAttribute('aria-pressed', 'false');
-					});
-
-					button.classList.add('is-selected');
-					button.setAttribute('aria-pressed', 'true');
-
-					clearMessage(app);
-					await loadAddons(app, state);
-					goToStep(app, state, 2);
-				});
-
-				target.appendChild(button);
-			});
+			memoryCache.jobs = list;
+			renderJobs(app, state, target, list);
 		} catch (error) {
 			target.innerHTML = `<div class="ebm-error">${escapeHtml(error.message)}</div>`;
 		}
@@ -286,67 +326,78 @@
 			return;
 		}
 
+		const key = String(state.jobId);
+
+		if (memoryCache.addons[key]) {
+			renderAddons(app, state, target, memoryCache.addons[key]);
+			return;
+		}
+
 		target.innerHTML = '<div class="ebm-loading">Loading add-ons...</div>';
 
 		try {
 			const response = await api(`addons?job_id=${encodeURIComponent(state.jobId)}`);
 			const addons = Array.isArray(response) ? response : (response.addons || []);
-
-			if (!addons.length) {
-				target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this job.</div>';
-				return;
-			}
-
-			target.innerHTML = '';
-
-			addons.forEach(function (addon) {
-				const min = Number(addon.min_qty || 0);
-				const max = Number(addon.max_qty || 10);
-
-				const card = document.createElement('div');
-				card.className = 'ebm-addon-card';
-				card.innerHTML = `
-					<div class="ebm-addon-inner">
-						<div>
-							<span class="ebm-addon-title">${escapeHtml(addon.title || addon.name || 'Add-on')}</span>
-							${addon.description ? `<div class="ebm-addon-description">${escapeHtml(addon.description)}</div>` : ''}
-							<span class="ebm-addon-meta">${durationLabel(addon.extra_duration_minutes || 0)} per item</span>
-						</div>
-						<div class="ebm-addon-qty">
-							<label>
-								Qty
-								<input type="number" min="${min}" max="${max}" value="${min}" data-addon-id="${addon.id}">
-							</label>
-						</div>
-					</div>
-				`;
-
-				const input = qs('input', card);
-
-				input.addEventListener('change', function () {
-					let value = Number(input.value || 0);
-					value = Math.max(min, Math.min(max, value));
-					input.value = String(value);
-
-					if (value > 0) {
-						state.addons[addon.id] = value;
-						card.classList.add('is-selected');
-					} else {
-						delete state.addons[addon.id];
-						card.classList.remove('is-selected');
-					}
-
-					state.date = '';
-					state.time = '';
-					state.slots = [];
-					state.quote = null;
-				});
-
-				target.appendChild(card);
-			});
+			memoryCache.addons[key] = addons;
+			renderAddons(app, state, target, addons);
 		} catch (error) {
 			target.innerHTML = `<div class="ebm-error">${escapeHtml(error.message)}</div>`;
 		}
+	}
+
+	function renderAddons(app, state, target, addons) {
+		if (!addons.length) {
+			target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this job.</div>';
+			return;
+		}
+
+		target.innerHTML = '';
+
+		addons.forEach(function (addon) {
+			const min = Number(addon.min_qty || 0);
+			const max = Number(addon.max_qty || 10);
+
+			const card = document.createElement('div');
+			card.className = 'ebm-addon-card';
+			card.innerHTML = `
+				<div class="ebm-addon-inner">
+					<div>
+						<span class="ebm-addon-title">${escapeHtml(addon.title || addon.name || 'Add-on')}</span>
+						${addon.description ? `<div class="ebm-addon-description">${escapeHtml(addon.description)}</div>` : ''}
+						<span class="ebm-addon-meta">${durationLabel(addon.extra_duration_minutes || 0)} per item</span>
+					</div>
+					<div class="ebm-addon-qty">
+						<label>
+							Qty
+							<input type="number" min="${min}" max="${max}" value="${min}" data-addon-id="${addon.id}">
+						</label>
+					</div>
+				</div>
+			`;
+
+			const input = qs('input', card);
+
+			input.addEventListener('change', function () {
+				let value = Number(input.value || 0);
+				value = Math.max(min, Math.min(max, value));
+				input.value = String(value);
+
+				if (value > 0) {
+					state.addons[addon.id] = value;
+					card.classList.add('is-selected');
+				} else {
+					delete state.addons[addon.id];
+					card.classList.remove('is-selected');
+				}
+
+				state.date = '';
+				state.time = '';
+				state.slots = [];
+				state.quote = null;
+			});
+
+			target.appendChild(card);
+		});
 	}
 
 	async function loadSlots(app, state) {
@@ -358,6 +409,18 @@
 
 		if (!state.jobId || !state.date) {
 			target.innerHTML = '';
+			return;
+		}
+
+		const key = cacheKey('slots', {
+			job_id: state.jobId,
+			date: ukToIso(state.date),
+			addons: state.addons,
+		});
+
+		if (memoryCache.slots[key]) {
+			state.slots = memoryCache.slots[key];
+			renderSlots(app, state, target, memoryCache.slots[key]);
 			return;
 		}
 
@@ -374,51 +437,66 @@
 			});
 
 			const slots = Array.isArray(response) ? response : (response.slots || []);
+			memoryCache.slots[key] = slots;
 			state.slots = slots;
 
-			if (!slots.length) {
-				target.innerHTML = '<div class="ebm-empty">No available times for this date. Please choose another date.</div>';
-				return;
-			}
-
-			target.innerHTML = '';
-
-			slots.forEach(function (slot) {
-				const time = slot.time || slot.start || slot.label;
-
-				if (!time) {
-					return;
-				}
-
-				const button = document.createElement('button');
-				button.type = 'button';
-				button.className = 'ebm-slot';
-				button.textContent = time;
-				button.dataset.time = time;
-
-				button.addEventListener('click', function () {
-					state.time = time;
-
-					qsa('.ebm-slot', target).forEach(function (item) {
-						item.classList.remove('is-selected');
-						item.setAttribute('aria-pressed', 'false');
-					});
-
-					button.classList.add('is-selected');
-					button.setAttribute('aria-pressed', 'true');
-
-					clearMessage(app);
-					goToStep(app, state, 4);
-				});
-
-				target.appendChild(button);
-			});
+			renderSlots(app, state, target, slots);
 		} catch (error) {
 			target.innerHTML = `<div class="ebm-error">${escapeHtml(error.message)}</div>`;
 		}
 	}
 
+	function renderSlots(app, state, target, slots) {
+		if (!slots.length) {
+			target.innerHTML = '<div class="ebm-empty">No available times for this date. Please choose another date.</div>';
+			return;
+		}
+
+		target.innerHTML = '';
+
+		slots.forEach(function (slot) {
+			const time = slot.time || slot.start || slot.label;
+
+			if (!time) {
+				return;
+			}
+
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = 'ebm-slot';
+			button.textContent = time;
+			button.dataset.time = time;
+
+			button.addEventListener('click', function () {
+				state.time = time;
+
+				qsa('.ebm-slot', target).forEach(function (item) {
+					item.classList.remove('is-selected');
+					item.setAttribute('aria-pressed', 'false');
+				});
+
+				button.classList.add('is-selected');
+				button.setAttribute('aria-pressed', 'true');
+
+				clearMessage(app);
+				goToStep(app, state, 4);
+			});
+
+			target.appendChild(button);
+		});
+	}
+
 	async function loadQuote(state) {
+		const key = cacheKey('quote', {
+			job_id: state.jobId,
+			addons: state.addons,
+		});
+
+		if (memoryCache.quotes[key]) {
+			state.quote = memoryCache.quotes[key];
+			return memoryCache.quotes[key];
+		}
+
 		const response = await api('quote', {
 			method: 'POST',
 			body: JSON.stringify({
@@ -428,6 +506,7 @@
 		});
 
 		state.quote = response;
+		memoryCache.quotes[key] = response;
 
 		return response;
 	}
@@ -477,6 +556,8 @@
 					customer: state.customer,
 				}),
 			});
+
+			memoryCache.slots = {};
 
 			if (response && response.checkout_url) {
 				window.location.href = response.checkout_url;
@@ -611,7 +692,10 @@
 					button.classList.add('is-selected');
 				}
 
-				button.addEventListener('click', async function () {
+				button.addEventListener('click', async function (event) {
+					event.preventDefault();
+					event.stopPropagation();
+
 					input.value = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 					state.date = input.value;
 					state.time = '';
@@ -626,32 +710,35 @@
 			popover.appendChild(days);
 
 			qs('[data-cal-prev]', popover).addEventListener('click', function (event) {
-                event.preventDefault();
-                event.stopPropagation();
+				event.preventDefault();
+				event.stopPropagation();
 
-                state.calendarMonth = new Date(year, monthIndex - 1, 1);
-                render();
-                toggle(true);
-            });
+				state.calendarMonth = new Date(year, monthIndex - 1, 1);
+				render();
+				toggle(true);
+			});
 
-            qs('[data-cal-next]', popover).addEventListener('click', function (event) {
-                event.preventDefault();
-                event.stopPropagation();
+			qs('[data-cal-next]', popover).addEventListener('click', function (event) {
+				event.preventDefault();
+				event.stopPropagation();
 
-                state.calendarMonth = new Date(year, monthIndex + 1, 1);
-                render();
-                toggle(true);
-            });
+				state.calendarMonth = new Date(year, monthIndex + 1, 1);
+				render();
+				toggle(true);
+			});
 		}
 
-		trigger.addEventListener('click', function () {
-            render();
-            toggle(!popover.classList.contains('is-open'));
-        });
+		trigger.addEventListener('click', function (event) {
+			event.preventDefault();
+			event.stopPropagation();
 
-        popover.addEventListener('click', function (event) {
-            event.stopPropagation();
-        });
+			render();
+			toggle(!popover.classList.contains('is-open'));
+		});
+
+		popover.addEventListener('click', function (event) {
+			event.stopPropagation();
+		});
 
 		input.addEventListener('focus', function () {
 			render();
@@ -720,12 +807,15 @@
 		addonActions.className = 'ebm-actions';
 		const addonBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const addonNext = createButton('Continue', 'ebm-btn');
+
 		addonBack.addEventListener('click', function () {
 			goToStep(app, state, 1);
 		});
+
 		addonNext.addEventListener('click', function () {
 			goToStep(app, state, 3);
 		});
+
 		addonActions.append(addonBack, addonNext);
 		addons.append(addonText, addonList, addonActions);
 
@@ -742,9 +832,11 @@
 		const dateActions = document.createElement('div');
 		dateActions.className = 'ebm-actions';
 		const dateBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
+
 		dateBack.addEventListener('click', function () {
 			goToStep(app, state, 2);
 		});
+
 		dateActions.appendChild(dateBack);
 		dates.append(dateLabel, slots, dateActions);
 

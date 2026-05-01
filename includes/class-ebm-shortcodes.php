@@ -19,6 +19,41 @@ final class EBM_Shortcodes {
 		return defined( 'EBM_VERSION' ) ? EBM_VERSION : '1.0.0';
 	}
 
+	private static function preload_jobs() {
+		global $wpdb;
+
+		$cache_key = 'ebm_frontend_jobs_' . md5( get_locale() );
+		$cached    = get_transient( $cache_key );
+
+		if ( false !== $cached && is_array( $cached ) ) {
+			return $cached;
+		}
+
+		$jobs_table = EBM_Helpers::table( 'jobs' );
+
+		$rows = $wpdb->get_results(
+			"SELECT id, title, description, duration_minutes
+			FROM $jobs_table
+			WHERE is_active = 1
+			ORDER BY title ASC"
+		);
+
+		$jobs = array();
+
+		foreach ( (array) $rows as $row ) {
+			$jobs[] = array(
+				'id'               => absint( $row->id ),
+				'title'            => sanitize_text_field( $row->title ),
+				'description'      => sanitize_textarea_field( $row->description ),
+				'duration_minutes' => absint( $row->duration_minutes ),
+			);
+		}
+
+		set_transient( $cache_key, $jobs, 10 * MINUTE_IN_SECONDS );
+
+		return $jobs;
+	}
+
 	private static function enqueue_frontend_assets() {
 		wp_enqueue_style(
 			'ebm-frontend',
@@ -39,8 +74,10 @@ final class EBM_Shortcodes {
 			'ebm-frontend',
 			'ebmBooking',
 			array(
-				'restUrl' => esc_url_raw( rest_url( 'ebm/v1/' ) ),
-				'nonce'   => wp_create_nonce( 'wp_rest' ),
+				'restUrl'       => esc_url_raw( rest_url( 'ebm/v1/' ) ),
+				'nonce'         => wp_create_nonce( 'wp_rest' ),
+				'preloadedJobs' => self::preload_jobs(),
+				'cacheVersion'  => self::frontend_asset_version( 'assets/js/frontend.js' ),
 			)
 		);
 	}
