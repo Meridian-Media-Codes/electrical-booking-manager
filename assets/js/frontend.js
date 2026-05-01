@@ -625,21 +625,33 @@
 
 			popover.appendChild(days);
 
-			qs('[data-cal-prev]', popover).addEventListener('click', function () {
-				state.calendarMonth = new Date(year, monthIndex - 1, 1);
-				render();
-			});
+			qs('[data-cal-prev]', popover).addEventListener('click', function (event) {
+                event.preventDefault();
+                event.stopPropagation();
 
-			qs('[data-cal-next]', popover).addEventListener('click', function () {
-				state.calendarMonth = new Date(year, monthIndex + 1, 1);
-				render();
-			});
+                state.calendarMonth = new Date(year, monthIndex - 1, 1);
+                render();
+                toggle(true);
+            });
+
+            qs('[data-cal-next]', popover).addEventListener('click', function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+
+                state.calendarMonth = new Date(year, monthIndex + 1, 1);
+                render();
+                toggle(true);
+            });
 		}
 
 		trigger.addEventListener('click', function () {
-			render();
-			toggle(!popover.classList.contains('is-open'));
-		});
+            render();
+            toggle(!popover.classList.contains('is-open'));
+        });
+
+        popover.addEventListener('click', function (event) {
+            event.stopPropagation();
+        });
 
 		input.addEventListener('focus', function () {
 			render();
