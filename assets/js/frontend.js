@@ -18,6 +18,7 @@
 			slots: [],
 			customer: {},
 			quote: null,
+			voucherCode: '',
 			calendarMonth: null,
 		};
 	}
@@ -265,6 +266,7 @@
 				state.time = '';
 				state.slots = [];
 				state.quote = null;
+				state.voucherCode = '';
 
 				qsa('.ebm-job-card', target).forEach(function (card) {
 					card.classList.remove('is-selected');
@@ -394,6 +396,7 @@
 				state.time = '';
 				state.slots = [];
 				state.quote = null;
+				state.voucherCode = '';
 			});
 
 			target.appendChild(card);
@@ -486,13 +489,14 @@
 		});
 	}
 
-	async function loadQuote(state) {
+	async function loadQuote(state, bypassCache) {
 		const key = cacheKey('quote', {
 			job_id: state.jobId,
 			addons: state.addons,
+			voucher_code: state.voucherCode || '',
 		});
 
-		if (memoryCache.quotes[key]) {
+		if (!bypassCache && memoryCache.quotes[key]) {
 			state.quote = memoryCache.quotes[key];
 			return memoryCache.quotes[key];
 		}
@@ -502,6 +506,7 @@
 			body: JSON.stringify({
 				job_id: state.jobId,
 				addons: state.addons,
+				voucher_code: state.voucherCode || '',
 			}),
 		});
 
@@ -519,6 +524,8 @@
 		}
 
 		const quote = state.quote || {};
+		const discountAmount = Number(quote.discount_amount || 0);
+		const voucherCode = quote.voucher_code || state.voucherCode || '';
 
 		target.innerHTML = `
 			<div class="ebm-summary-card">
@@ -530,6 +537,12 @@
 					<span>Time</span>
 					<strong>${escapeHtml(state.time || '')}</strong>
 				</div>
+				${discountAmount > 0 ? `
+					<div class="ebm-summary-row">
+						<span>Voucher ${escapeHtml(voucherCode)}</span>
+						<strong>-${money(discountAmount)}</strong>
+					</div>
+				` : ''}
 				<div class="ebm-summary-row ebm-total-row">
 					<span>Total</span>
 					<strong>${money(quote.total || quote.total_amount || 0)}</strong>
@@ -540,6 +553,57 @@
 				</div>
 			</div>
 		`;
+	}
+
+	async function applyVoucher(app, state) {
+		const input = qs('[data-ebm-voucher-input]', app);
+		const message = qs('[data-ebm-voucher-message]', app);
+
+		if (!input) {
+			return;
+		}
+
+		state.voucherCode = input.value.trim().toUpperCase();
+
+		if (!state.voucherCode) {
+			if (message) {
+				message.className = 'ebm-voucher-message ebm-error';
+				message.textContent = 'Enter a voucher code.';
+			}
+			return;
+		}
+
+		if (message) {
+			message.className = 'ebm-voucher-message ebm-loading';
+			message.textContent = 'Checking voucher...';
+		}
+
+		try {
+			await loadQuote(state, true);
+			renderReview(app, state);
+
+			if (message) {
+				const discountAmount = Number(state.quote.discount_amount || 0);
+
+				if (discountAmount > 0) {
+					message.className = 'ebm-voucher-message ebm-success';
+					message.textContent = `Voucher applied. You saved ${money(discountAmount)}.`;
+				} else {
+					message.className = 'ebm-voucher-message ebm-error';
+					message.textContent = 'This voucher did not change the total.';
+				}
+			}
+		} catch (error) {
+			state.voucherCode = '';
+			state.quote = null;
+			await loadQuote(state, true);
+			renderReview(app, state);
+
+			if (message) {
+				message.className = 'ebm-voucher-message ebm-error';
+				message.textContent = error.message;
+			}
+		}
 	}
 
 	async function submitBooking(app, state) {
@@ -553,11 +617,13 @@
 					addons: state.addons,
 					date: ukToIso(state.date),
 					time: state.time,
+					voucher_code: state.voucherCode || '',
 					customer: state.customer,
 				}),
 			});
 
 			memoryCache.slots = {};
+			memoryCache.quotes = {};
 
 			if (response && response.checkout_url) {
 				window.location.href = response.checkout_url;
@@ -891,7 +957,7 @@
 			clearMessage(app);
 
 			try {
-				await loadQuote(state);
+				await loadQuote(state, true);
 				renderReview(app, state);
 				goToStep(app, state, 5);
 			} catch (error) {
@@ -903,10 +969,24 @@
 		details.appendChild(detailsActions);
 
 		const review = screen(5, 'Confirm and pay deposit');
+
 		const reviewBox = document.createElement('div');
 		reviewBox.dataset.ebmReview = '';
+
+		const voucherBox = document.createElement('div');
+		voucherBox.className = 'ebm-voucher-box';
+		voucherBox.innerHTML = `
+			<label for="ebm-voucher-code">Voucher code</label>
+			<div class="ebm-voucher-row">
+				<input id="ebm-voucher-code" type="text" data-ebm-voucher-input placeholder="Enter voucher code">
+				<button type="button" class="ebm-btn ebm-btn-secondary" data-ebm-apply-voucher>Apply</button>
+			</div>
+			<div class="ebm-voucher-message" data-ebm-voucher-message></div>
+		`;
+
 		const reviewActions = document.createElement('div');
 		reviewActions.className = 'ebm-actions';
+
 		const reviewBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const reviewSubmit = createButton('Confirm booking and pay deposit', 'ebm-btn');
 
@@ -918,8 +998,19 @@
 			submitBooking(app, state);
 		});
 
+		qs('[data-ebm-apply-voucher]', voucherBox).addEventListener('click', function () {
+			applyVoucher(app, state);
+		});
+
+		qs('[data-ebm-voucher-input]', voucherBox).addEventListener('keydown', function (event) {
+			if ('Enter' === event.key) {
+				event.preventDefault();
+				applyVoucher(app, state);
+			}
+		});
+
 		reviewActions.append(reviewBack, reviewSubmit);
-		review.append(reviewBox, reviewActions);
+		review.append(reviewBox, voucherBox, reviewActions);
 
 		shell.append(jobs, addons, dates, details, review);
 		app.appendChild(shell);
@@ -951,4 +1042,4 @@
 	} else {
 		init();
 	}
-})();
+})();s
