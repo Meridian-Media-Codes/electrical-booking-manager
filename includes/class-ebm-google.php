@@ -127,6 +127,28 @@ final class EBM_Google {
 		exit;
 	}
 
+	private static function google_error_message( $response, $fallback ) {
+		if ( is_wp_error( $response ) ) {
+			return $response->get_error_message();
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( isset( $body['error']['message'] ) ) {
+			return sanitize_text_field( $body['error']['message'] );
+		}
+
+		if ( isset( $body['error_description'] ) ) {
+			return sanitize_text_field( $body['error_description'] );
+		}
+
+		if ( isset( $body['error'] ) && is_string( $body['error'] ) ) {
+			return sanitize_text_field( $body['error'] );
+		}
+
+		return $fallback;
+	}
+
 	private static function token() {
 		$cached = get_transient( 'ebm_google_access_token' );
 
@@ -292,7 +314,10 @@ final class EBM_Google {
 		$token = self::token();
 
 		if ( ! $token ) {
-			return new WP_Error( 'ebm_google_token', __( 'Could not refresh the Google Calendar access token.', 'electrical-booking-manager' ) );
+			return new WP_Error(
+				'ebm_google_token',
+				__( 'Could not refresh the Google Calendar access token. Clear the saved token, save settings, then connect again.', 'electrical-booking-manager' )
+			);
 		}
 
 		$calendar_id = rawurlencode( EBM_Settings::get( 'google_calendar_id', 'primary' ) );
@@ -322,7 +347,13 @@ final class EBM_Google {
 		}
 
 		if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
-			return new WP_Error( 'ebm_google_events', __( 'Google Calendar events could not be loaded.', 'electrical-booking-manager' ) );
+			return new WP_Error(
+				'ebm_google_events',
+				self::google_error_message(
+					$response,
+					__( 'Google Calendar events could not be loaded.', 'electrical-booking-manager' )
+				)
+			);
 		}
 
 		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
