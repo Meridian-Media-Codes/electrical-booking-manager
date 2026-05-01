@@ -19,6 +19,7 @@ final class EBM_Admin {
 
 		add_action( 'admin_post_ebm_save_customer', array( __CLASS__, 'save_customer' ) );
 		add_action( 'admin_post_ebm_delete_customer', array( __CLASS__, 'delete_customer' ) );
+		add_action( 'admin_post_ebm_bulk_customers', array( __CLASS__, 'bulk_customers' ) );
 
 		add_action( 'admin_post_ebm_update_booking', array( __CLASS__, 'update_booking' ) );
 	}
@@ -92,6 +93,14 @@ final class EBM_Admin {
 
 		if ( ! empty( $_GET['not_deleted'] ) ) {
 			echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'This customer has bookings, so they were not deleted.', 'electrical-booking-manager' ) . '</p></div>';
+		}
+
+		if ( ! empty( $_GET['bulk_deleted'] ) ) {
+			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Selected customers were deleted.', 'electrical-booking-manager' ) . '</p></div>';
+		}
+
+		if ( ! empty( $_GET['bulk_skipped'] ) ) {
+			echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'Some customers were skipped because they have bookings.', 'electrical-booking-manager' ) . '</p></div>';
 		}
 	}
 
@@ -407,6 +416,15 @@ final class EBM_Admin {
 				min-height: 38px;
 			}
 
+			.ebm-bulk-bar {
+				padding: 16px 24px;
+				display: flex;
+				gap: 10px;
+				align-items: center;
+				border-bottom: 1px solid #dcdcde;
+				background: #fff;
+			}
+
 			.ebm-customers-table {
 				width: 100%;
 				border-collapse: collapse;
@@ -516,6 +534,11 @@ final class EBM_Admin {
 
 				.ebm-customers-header,
 				.ebm-pagination {
+					align-items: flex-start;
+					flex-direction: column;
+				}
+
+				.ebm-bulk-bar {
 					align-items: flex-start;
 					flex-direction: column;
 				}
@@ -681,17 +704,17 @@ final class EBM_Admin {
 
 		$offset = ( $paged - 1 ) * $per_page;
 
-		$where_sql = '1=1';
+		$where_sql  = '1=1';
 		$where_args = array();
 
 		if ( '' !== $search ) {
-			$like = '%' . $wpdb->esc_like( $search ) . '%';
-			$where_sql = '(c.name LIKE %s OR c.email LIKE %s OR c.phone LIKE %s OR c.address LIKE %s)';
+			$like       = '%' . $wpdb->esc_like( $search ) . '%';
+			$where_sql  = '(c.name LIKE %s OR c.email LIKE %s OR c.phone LIKE %s OR c.address LIKE %s)';
 			$where_args = array( $like, $like, $like, $like );
 		}
 
 		$total_sql = "SELECT COUNT(*) FROM $customers_table c WHERE $where_sql";
-		$total = ! empty( $where_args )
+		$total     = ! empty( $where_args )
 			? (int) $wpdb->get_var( $wpdb->prepare( $total_sql, $where_args ) )
 			: (int) $wpdb->get_var( $total_sql );
 
@@ -730,8 +753,7 @@ final class EBM_Admin {
 		}
 
 		$total_pages = max( 1, (int) ceil( $total / $per_page ) );
-
-		$base_url = admin_url( 'admin.php?page=ebm-customers' );
+		$base_url    = admin_url( 'admin.php?page=ebm-customers' );
 		?>
 		<div class="wrap ebm-admin-shell">
 			<?php self::admin_notice(); ?>
@@ -759,65 +781,87 @@ final class EBM_Admin {
 					</button>
 				</form>
 
-				<table class="ebm-customers-table">
-					<thead>
-						<tr>
-							<th style="width:40px;"><input type="checkbox" disabled></th>
-							<th><?php esc_html_e( 'Full Name', 'electrical-booking-manager' ); ?></th>
-							<th><?php esc_html_e( 'Email', 'electrical-booking-manager' ); ?></th>
-							<th><?php esc_html_e( 'Phone', 'electrical-booking-manager' ); ?></th>
-							<th><?php esc_html_e( 'Recent Booking', 'electrical-booking-manager' ); ?></th>
-							<th><?php esc_html_e( 'Total Bookings', 'electrical-booking-manager' ); ?></th>
-						</tr>
-					</thead>
+				<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+					<input type="hidden" name="action" value="ebm_bulk_customers">
+					<?php wp_nonce_field( 'ebm_bulk_customers' ); ?>
 
-					<tbody>
-						<?php if ( empty( $customers ) ) : ?>
-							<tr>
-								<td colspan="6"><?php esc_html_e( 'No customers found.', 'electrical-booking-manager' ); ?></td>
-							</tr>
-						<?php endif; ?>
+					<div class="ebm-bulk-bar">
+						<select name="bulk_action">
+							<option value=""><?php esc_html_e( 'Bulk actions', 'electrical-booking-manager' ); ?></option>
+							<option value="delete"><?php esc_html_e( 'Delete selected', 'electrical-booking-manager' ); ?></option>
+						</select>
 
-						<?php foreach ( $customers as $customer ) : ?>
-							<?php
-							$initial = strtoupper( mb_substr( $customer->name, 0, 1 ) );
-							$edit_url = admin_url( 'admin.php?page=ebm-customers&customer_id=' . absint( $customer->id ) . '#ebm-customer-editor' );
-							$delete_url = wp_nonce_url(
-								admin_url( 'admin-post.php?action=ebm_delete_customer&customer_id=' . absint( $customer->id ) ),
-								'ebm_delete_customer_' . absint( $customer->id )
-							);
-							?>
+						<button class="button" type="submit" onclick="return confirm('<?php echo esc_js( __( 'Apply this bulk action? Customers with bookings will be skipped.', 'electrical-booking-manager' ) ); ?>');">
+							<?php esc_html_e( 'Apply', 'electrical-booking-manager' ); ?>
+						</button>
+					</div>
+
+					<table class="ebm-customers-table">
+						<thead>
 							<tr>
-								<td><input type="checkbox" disabled></td>
-								<td>
-									<div class="ebm-customer-name">
-										<span class="ebm-avatar"><?php echo esc_html( $initial ); ?></span>
-										<span>
-											<?php echo esc_html( $customer->name ); ?>
-											<div class="ebm-row-actions">
-												<a href="<?php echo esc_url( $edit_url ); ?>"><?php esc_html_e( 'Edit', 'electrical-booking-manager' ); ?></a>
-												|
-												<a class="ebm-danger-link" href="<?php echo esc_url( $delete_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this customer? Customers with bookings will not be deleted.', 'electrical-booking-manager' ) ); ?>');"><?php esc_html_e( 'Delete', 'electrical-booking-manager' ); ?></a>
-											</div>
-										</span>
-									</div>
-								</td>
-								<td><?php echo esc_html( $customer->email ); ?></td>
-								<td><?php echo esc_html( $customer->phone ); ?></td>
-								<td>
-									<?php
-									if ( ! empty( $customer->recent_booking ) ) {
-										echo esc_html( mysql2date( 'F j, Y g:i a', $customer->recent_booking ) );
-									} else {
-										echo esc_html__( 'None', 'electrical-booking-manager' );
-									}
-									?>
-								</td>
-								<td><?php echo esc_html( absint( $customer->total_bookings ) ); ?></td>
+								<th style="width:40px;"><input type="checkbox" id="ebm-select-all-customers"></th>
+								<th><?php esc_html_e( 'Full Name', 'electrical-booking-manager' ); ?></th>
+								<th><?php esc_html_e( 'Email', 'electrical-booking-manager' ); ?></th>
+								<th><?php esc_html_e( 'Phone', 'electrical-booking-manager' ); ?></th>
+								<th><?php esc_html_e( 'Recent Booking', 'electrical-booking-manager' ); ?></th>
+								<th><?php esc_html_e( 'Total Bookings', 'electrical-booking-manager' ); ?></th>
 							</tr>
-						<?php endforeach; ?>
-					</tbody>
-				</table>
+						</thead>
+
+						<tbody>
+							<?php if ( empty( $customers ) ) : ?>
+								<tr>
+									<td colspan="6"><?php esc_html_e( 'No customers found.', 'electrical-booking-manager' ); ?></td>
+								</tr>
+							<?php endif; ?>
+
+							<?php foreach ( $customers as $customer ) : ?>
+								<?php
+								$initial    = strtoupper( mb_substr( $customer->name, 0, 1 ) );
+								$edit_url   = admin_url( 'admin.php?page=ebm-customers&customer_id=' . absint( $customer->id ) . '#ebm-customer-editor' );
+								$delete_url = wp_nonce_url(
+									admin_url( 'admin-post.php?action=ebm_delete_customer&customer_id=' . absint( $customer->id ) ),
+									'ebm_delete_customer_' . absint( $customer->id )
+								);
+								?>
+								<tr>
+									<td>
+										<input type="checkbox" class="ebm-customer-check" name="customer_ids[]" value="<?php echo esc_attr( $customer->id ); ?>">
+									</td>
+
+									<td>
+										<div class="ebm-customer-name">
+											<span class="ebm-avatar"><?php echo esc_html( $initial ); ?></span>
+											<span>
+												<?php echo esc_html( $customer->name ); ?>
+												<div class="ebm-row-actions">
+													<a href="<?php echo esc_url( $edit_url ); ?>"><?php esc_html_e( 'Edit', 'electrical-booking-manager' ); ?></a>
+													|
+													<a class="ebm-danger-link" href="<?php echo esc_url( $delete_url ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Delete this customer? Customers with bookings will not be deleted.', 'electrical-booking-manager' ) ); ?>');"><?php esc_html_e( 'Delete', 'electrical-booking-manager' ); ?></a>
+												</div>
+											</span>
+										</div>
+									</td>
+
+									<td><?php echo esc_html( $customer->email ); ?></td>
+									<td><?php echo esc_html( $customer->phone ); ?></td>
+
+									<td>
+										<?php
+										if ( ! empty( $customer->recent_booking ) ) {
+											echo esc_html( mysql2date( 'F j, Y g:i a', $customer->recent_booking ) );
+										} else {
+											echo esc_html__( 'None', 'electrical-booking-manager' );
+										}
+										?>
+									</td>
+
+									<td><?php echo esc_html( absint( $customer->total_bookings ) ); ?></td>
+								</tr>
+							<?php endforeach; ?>
+						</tbody>
+					</table>
+				</form>
 
 				<div class="ebm-pagination">
 					<div class="ebm-pagination-left">
@@ -834,6 +878,7 @@ final class EBM_Admin {
 						<form method="get" action="<?php echo esc_url( admin_url( 'admin.php' ) ); ?>">
 							<input type="hidden" name="page" value="ebm-customers">
 							<input type="hidden" name="s" value="<?php echo esc_attr( $search ); ?>">
+
 							<label>
 								<?php esc_html_e( 'Per Page', 'electrical-booking-manager' ); ?>
 								<select name="per_page" onchange="this.form.submit()">
@@ -862,11 +907,27 @@ final class EBM_Admin {
 
 			<?php self::customer_editor_panel( $editing_customer ); ?>
 		</div>
+
+		<script>
+			document.addEventListener('DOMContentLoaded', function () {
+				const selectAll = document.getElementById('ebm-select-all-customers');
+
+				if (!selectAll) {
+					return;
+				}
+
+				selectAll.addEventListener('change', function () {
+					document.querySelectorAll('.ebm-customer-check').forEach(function (checkbox) {
+						checkbox.checked = selectAll.checked;
+					});
+				});
+			});
+		</script>
 		<?php
 	}
 
 	private static function customer_editor_panel( $customer ) {
-		$is_new = ! $customer;
+		$is_new        = ! $customer;
 		$show_new_form = isset( $_GET['customer_id'] ) && '0' === (string) $_GET['customer_id'];
 
 		if ( $is_new && ! $show_new_form ) {
@@ -927,7 +988,7 @@ final class EBM_Admin {
 
 		global $wpdb;
 
-		$id = absint( $_POST['id'] ?? 0 );
+		$id  = absint( $_POST['id'] ?? 0 );
 		$now = current_time( 'mysql' );
 
 		$name  = sanitize_text_field( wp_unslash( $_POST['name'] ?? '' ) );
@@ -958,7 +1019,7 @@ final class EBM_Admin {
 			$customer_id = $id;
 		} else {
 			$data['privacy_accepted_at'] = null;
-			$data['created_at'] = $now;
+			$data['created_at']          = $now;
 
 			$wpdb->insert(
 				EBM_Helpers::table( 'customers' ),
@@ -1005,6 +1066,76 @@ final class EBM_Admin {
 		);
 
 		wp_safe_redirect( admin_url( 'admin.php?page=ebm-customers&deleted=1' ) );
+		exit;
+	}
+
+	public static function bulk_customers() {
+		self::cap();
+		check_admin_referer( 'ebm_bulk_customers' );
+
+		$bulk_action = sanitize_key( wp_unslash( $_POST['bulk_action'] ?? '' ) );
+
+		if ( 'delete' !== $bulk_action ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=ebm-customers' ) );
+			exit;
+		}
+
+		$customer_ids = isset( $_POST['customer_ids'] ) && is_array( $_POST['customer_ids'] )
+			? array_map( 'absint', wp_unslash( $_POST['customer_ids'] ) )
+			: array();
+
+		$customer_ids = array_filter( array_unique( $customer_ids ) );
+
+		if ( empty( $customer_ids ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=ebm-customers' ) );
+			exit;
+		}
+
+		global $wpdb;
+
+		$customers_table = EBM_Helpers::table( 'customers' );
+		$bookings_table  = EBM_Helpers::table( 'bookings' );
+
+		$deleted = 0;
+		$skipped = 0;
+
+		foreach ( $customer_ids as $customer_id ) {
+			$bookings_count = (int) $wpdb->get_var(
+				$wpdb->prepare(
+					"SELECT COUNT(*) FROM $bookings_table WHERE customer_id = %d",
+					$customer_id
+				)
+			);
+
+			if ( $bookings_count > 0 ) {
+				$skipped++;
+				continue;
+			}
+
+			$result = $wpdb->delete(
+				$customers_table,
+				array( 'id' => $customer_id ),
+				array( '%d' )
+			);
+
+			if ( false !== $result ) {
+				$deleted++;
+			}
+		}
+
+		$args = array(
+			'page' => 'ebm-customers',
+		);
+
+		if ( $deleted > 0 ) {
+			$args['bulk_deleted'] = 1;
+		}
+
+		if ( $skipped > 0 ) {
+			$args['bulk_skipped'] = 1;
+		}
+
+		wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
 		exit;
 	}
 
