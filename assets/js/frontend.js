@@ -1,21 +1,19 @@
 (function () {
 	'use strict';
 
-	const state = {
-		step: 1,
-		jobId: null,
-		addons: {},
-		date: '',
-		time: '',
-		slots: [],
-		customer: {},
-		quote: null,
-		calendarMonth: null,
-	};
-
-	const selectors = {
-		app: '.ebm-booking-form',
-	};
+	function createInitialState() {
+		return {
+			step: 1,
+			jobId: null,
+			addons: {},
+			date: '',
+			time: '',
+			slots: [],
+			customer: {},
+			quote: null,
+			calendarMonth: null,
+		};
+	}
 
 	function qs(selector, root = document) {
 		return root.querySelector(selector);
@@ -27,24 +25,6 @@
 
 	function pad(value) {
 		return String(value).padStart(2, '0');
-	}
-
-	function isoToUk(value) {
-		if (!value) {
-			return '';
-		}
-
-		if (/^\d{2}\/\d{2}\/\d{4}$/.test(value)) {
-			return value;
-		}
-
-		const parts = String(value).split('-');
-
-		if (parts.length !== 3) {
-			return value;
-		}
-
-		return `${parts[2]}/${parts[1]}/${parts[0]}`;
 	}
 
 	function ukToIso(value) {
@@ -78,11 +58,11 @@
 	}
 
 	function getConfig() {
-		const config = window.ebmBooking || window.EBM_BOOKING || window.ebm_booking || {};
+		const config = window.ebmBooking || {};
 
 		return {
-			restUrl: config.restUrl || config.root || (window.wpApiSettings ? window.wpApiSettings.root + 'ebm/v1/' : '/wp-json/ebm/v1/'),
-			nonce: config.nonce || (window.wpApiSettings ? window.wpApiSettings.nonce : ''),
+			restUrl: config.restUrl || '/wp-json/ebm/v1/',
+			nonce: config.nonce || '',
 		};
 	}
 
@@ -121,6 +101,7 @@
 		button.type = type;
 		button.className = className;
 		button.textContent = text;
+
 		return button;
 	}
 
@@ -145,22 +126,7 @@
 		}
 	}
 
-	function normaliseExistingMarkup(app) {
-		if (qs('.ebm-booking-shell', app)) {
-			return;
-		}
-
-		const shell = document.createElement('div');
-		shell.className = 'ebm-booking-shell';
-
-		while (app.firstChild) {
-			shell.appendChild(app.firstChild);
-		}
-
-		app.appendChild(shell);
-	}
-
-	function stepHeader() {
+	function stepHeader(app, state) {
 		const header = document.createElement('div');
 		header.className = 'ebm-step-header';
 		header.setAttribute('aria-label', 'Booking steps');
@@ -171,9 +137,9 @@
 			pill.className = 'ebm-step-pill';
 			pill.textContent = String(i);
 			pill.dataset.step = String(i);
-			pill.addEventListener('click', () => {
-				if (canMoveToStep(i)) {
-					goToStep(i);
+			pill.addEventListener('click', function () {
+				if (canMoveToStep(state, i)) {
+					goToStep(app, state, i);
 				}
 			});
 			header.appendChild(pill);
@@ -194,7 +160,7 @@
 		return div;
 	}
 
-	function canMoveToStep(step) {
+	function canMoveToStep(state, step) {
 		if (step <= state.step) {
 			return true;
 		}
@@ -210,26 +176,26 @@
 		return true;
 	}
 
-	function goToStep(step) {
+	function goToStep(app, state, step) {
 		state.step = step;
-		renderStepState();
+		renderStepState(app, state);
 
-		const active = qs(`.ebm-step-screen[data-step="${step}"]`);
+		const active = qs(`.ebm-step-screen[data-step="${step}"]`, app);
 
 		if (active) {
 			active.scrollIntoView({
 				behavior: 'smooth',
-				block: 'start',
+				block: 'nearest',
 			});
 		}
 	}
 
-	function renderStepState() {
-		qsa('.ebm-step-screen').forEach((section) => {
+	function renderStepState(app, state) {
+		qsa('.ebm-step-screen', app).forEach(function (section) {
 			section.classList.toggle('is-active', Number(section.dataset.step) === state.step);
 		});
 
-		qsa('.ebm-step-pill').forEach((pill) => {
+		qsa('.ebm-step-pill', app).forEach(function (pill) {
 			const step = Number(pill.dataset.step);
 			pill.classList.toggle('is-active', step === state.step);
 			pill.classList.toggle('is-done', step < state.step);
@@ -261,7 +227,7 @@
 		return `${total} Minutes`;
 	}
 
-	async function loadJobs(app, target) {
+	async function loadJobs(app, state, target) {
 		target.innerHTML = '<div class="ebm-loading">Loading jobs...</div>';
 
 		try {
@@ -275,7 +241,7 @@
 
 			target.innerHTML = '';
 
-			list.forEach((job) => {
+			list.forEach(function (job) {
 				const button = document.createElement('button');
 				button.type = 'button';
 				button.className = 'ebm-job-card';
@@ -285,7 +251,7 @@
 					<span class="ebm-job-meta">${durationLabel(job.duration_minutes || job.duration || 0)}</span>
 				`;
 
-				button.addEventListener('click', async () => {
+				button.addEventListener('click', async function () {
 					state.jobId = Number(job.id);
 					state.addons = {};
 					state.date = '';
@@ -293,7 +259,7 @@
 					state.slots = [];
 					state.quote = null;
 
-					qsa('.ebm-job-card', target).forEach((card) => {
+					qsa('.ebm-job-card', target).forEach(function (card) {
 						card.classList.remove('is-selected');
 						card.setAttribute('aria-pressed', 'false');
 					});
@@ -302,8 +268,8 @@
 					button.setAttribute('aria-pressed', 'true');
 
 					clearMessage(app);
-					await loadAddons(app);
-					goToStep(2);
+					await loadAddons(app, state);
+					goToStep(app, state, 2);
 				});
 
 				target.appendChild(button);
@@ -313,7 +279,7 @@
 		}
 	}
 
-	async function loadAddons(app) {
+	async function loadAddons(app, state) {
 		const target = qs('[data-ebm-addons]', app);
 
 		if (!target) {
@@ -333,7 +299,7 @@
 
 			target.innerHTML = '';
 
-			addons.forEach((addon) => {
+			addons.forEach(function (addon) {
 				const min = Number(addon.min_qty || 0);
 				const max = Number(addon.max_qty || 10);
 
@@ -357,7 +323,7 @@
 
 				const input = qs('input', card);
 
-				input.addEventListener('change', () => {
+				input.addEventListener('change', function () {
 					let value = Number(input.value || 0);
 					value = Math.max(min, Math.min(max, value));
 					input.value = String(value);
@@ -383,7 +349,7 @@
 		}
 	}
 
-	async function loadSlots(app) {
+	async function loadSlots(app, state) {
 		const target = qs('[data-ebm-slots]', app);
 
 		if (!target) {
@@ -417,7 +383,7 @@
 
 			target.innerHTML = '';
 
-			slots.forEach((slot) => {
+			slots.forEach(function (slot) {
 				const time = slot.time || slot.start || slot.label;
 
 				if (!time) {
@@ -430,10 +396,10 @@
 				button.textContent = time;
 				button.dataset.time = time;
 
-				button.addEventListener('click', () => {
+				button.addEventListener('click', function () {
 					state.time = time;
 
-					qsa('.ebm-slot', target).forEach((item) => {
+					qsa('.ebm-slot', target).forEach(function (item) {
 						item.classList.remove('is-selected');
 						item.setAttribute('aria-pressed', 'false');
 					});
@@ -442,7 +408,7 @@
 					button.setAttribute('aria-pressed', 'true');
 
 					clearMessage(app);
-					goToStep(4);
+					goToStep(app, state, 4);
 				});
 
 				target.appendChild(button);
@@ -452,25 +418,21 @@
 		}
 	}
 
-	async function loadQuote(app) {
-		try {
-			const response = await api('quote', {
-				method: 'POST',
-				body: JSON.stringify({
-					job_id: state.jobId,
-					addons: state.addons,
-				}),
-			});
+	async function loadQuote(state) {
+		const response = await api('quote', {
+			method: 'POST',
+			body: JSON.stringify({
+				job_id: state.jobId,
+				addons: state.addons,
+			}),
+		});
 
-			state.quote = response;
-			return response;
-		} catch (error) {
-			state.quote = null;
-			throw error;
-		}
+		state.quote = response;
+
+		return response;
 	}
 
-	function renderReview(app) {
+	function renderReview(app, state) {
 		const target = qs('[data-ebm-review]', app);
 
 		if (!target) {
@@ -501,7 +463,7 @@
 		`;
 	}
 
-	async function submitBooking(app) {
+	async function submitBooking(app, state) {
 		clearMessage(app);
 
 		try {
@@ -534,11 +496,11 @@
 
 	function getCustomer(app) {
 		return {
-			name: valueOf(app, '[name="name"], [name="customer_name"], [data-ebm-name]'),
-			email: valueOf(app, '[name="email"], [name="customer_email"], [data-ebm-email]'),
-			phone: valueOf(app, '[name="phone"], [name="customer_phone"], [data-ebm-phone]'),
-			address: valueOf(app, '[name="address"], [name="service_address"], [data-ebm-address]'),
-			privacy: !!qs('[name="privacy"], [name="privacy_acceptance"], [data-ebm-privacy]', app)?.checked,
+			name: valueOf(app, '[name="name"]'),
+			email: valueOf(app, '[name="email"]'),
+			phone: valueOf(app, '[name="phone"]'),
+			address: valueOf(app, '[name="address"]'),
+			privacy: !!qs('[name="privacy"]', app)?.checked,
 		};
 	}
 
@@ -556,7 +518,7 @@
 			.replace(/'/g, '&#039;');
 	}
 
-	function buildCalendar(input, app) {
+	function buildCalendar(input, app, state) {
 		const wrap = document.createElement('div');
 		wrap.className = 'ebm-date-wrap';
 
@@ -616,11 +578,13 @@
 
 			const weekdays = document.createElement('div');
 			weekdays.className = 'ebm-cal-weekdays';
-			['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].forEach((day) => {
+
+			['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].forEach(function (day) {
 				const span = document.createElement('span');
 				span.textContent = day;
 				weekdays.appendChild(span);
 			});
+
 			popover.appendChild(weekdays);
 
 			const days = document.createElement('div');
@@ -647,13 +611,13 @@
 					button.classList.add('is-selected');
 				}
 
-				button.addEventListener('click', async () => {
+				button.addEventListener('click', async function () {
 					input.value = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 					state.date = input.value;
 					state.time = '';
 					dispatchChange(input);
 					toggle(false);
-					await loadSlots(app);
+					await loadSlots(app, state);
 				});
 
 				days.appendChild(button);
@@ -661,34 +625,34 @@
 
 			popover.appendChild(days);
 
-			qs('[data-cal-prev]', popover).addEventListener('click', () => {
+			qs('[data-cal-prev]', popover).addEventListener('click', function () {
 				state.calendarMonth = new Date(year, monthIndex - 1, 1);
 				render();
 			});
 
-			qs('[data-cal-next]', popover).addEventListener('click', () => {
+			qs('[data-cal-next]', popover).addEventListener('click', function () {
 				state.calendarMonth = new Date(year, monthIndex + 1, 1);
 				render();
 			});
 		}
 
-		trigger.addEventListener('click', () => {
+		trigger.addEventListener('click', function () {
 			render();
 			toggle(!popover.classList.contains('is-open'));
 		});
 
-		input.addEventListener('focus', () => {
+		input.addEventListener('focus', function () {
 			render();
 			toggle(true);
 		});
 
-		input.addEventListener('change', async () => {
+		input.addEventListener('change', async function () {
 			state.date = input.value;
 			state.time = '';
-			await loadSlots(app);
+			await loadSlots(app, state);
 		});
 
-		document.addEventListener('click', (event) => {
+		document.addEventListener('click', function (event) {
 			if (!wrap.contains(event.target)) {
 				toggle(false);
 			}
@@ -719,12 +683,14 @@
 	}
 
 	function buildFreshApp(app) {
+		const state = createInitialState();
+
 		app.innerHTML = '';
 
 		const shell = document.createElement('div');
 		shell.className = 'ebm-booking-shell';
 
-		shell.appendChild(stepHeader());
+		shell.appendChild(stepHeader(app, state));
 
 		const jobs = screen(1, 'Choose the job');
 		const jobList = document.createElement('div');
@@ -742,8 +708,12 @@
 		addonActions.className = 'ebm-actions';
 		const addonBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const addonNext = createButton('Continue', 'ebm-btn');
-		addonBack.addEventListener('click', () => goToStep(1));
-		addonNext.addEventListener('click', () => goToStep(3));
+		addonBack.addEventListener('click', function () {
+			goToStep(app, state, 1);
+		});
+		addonNext.addEventListener('click', function () {
+			goToStep(app, state, 3);
+		});
 		addonActions.append(addonBack, addonNext);
 		addons.append(addonText, addonList, addonActions);
 
@@ -751,7 +721,7 @@
 		const dateLabel = document.createElement('label');
 		dateLabel.textContent = 'Start date';
 		const dateInput = document.createElement('input');
-		dateInput.type = 'date';
+		dateInput.type = 'text';
 		dateInput.name = 'date';
 		dateLabel.appendChild(dateInput);
 		const slots = document.createElement('div');
@@ -760,7 +730,9 @@
 		const dateActions = document.createElement('div');
 		dateActions.className = 'ebm-actions';
 		const dateBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
-		dateBack.addEventListener('click', () => goToStep(2));
+		dateBack.addEventListener('click', function () {
+			goToStep(app, state, 2);
+		});
 		dateActions.appendChild(dateBack);
 		dates.append(dateLabel, slots, dateActions);
 
@@ -789,12 +761,17 @@
 				<label for="ebm-privacy">I accept the privacy policy.</label>
 			</div>
 		`;
+
 		const detailsActions = document.createElement('div');
 		detailsActions.className = 'ebm-actions';
 		const detailsBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const detailsNext = createButton('Continue', 'ebm-btn');
-		detailsBack.addEventListener('click', () => goToStep(3));
-		detailsNext.addEventListener('click', async () => {
+
+		detailsBack.addEventListener('click', function () {
+			goToStep(app, state, 3);
+		});
+
+		detailsNext.addEventListener('click', async function () {
 			state.customer = getCustomer(app);
 
 			if (!state.customer.name || !state.customer.email || !state.customer.phone || !state.customer.address) {
@@ -810,13 +787,14 @@
 			clearMessage(app);
 
 			try {
-				await loadQuote(app);
-				renderReview(app);
-				goToStep(5);
+				await loadQuote(state);
+				renderReview(app, state);
+				goToStep(app, state, 5);
 			} catch (error) {
 				setMessage(app, error.message, 'error');
 			}
 		});
+
 		detailsActions.append(detailsBack, detailsNext);
 		details.appendChild(detailsActions);
 
@@ -827,28 +805,46 @@
 		reviewActions.className = 'ebm-actions';
 		const reviewBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const reviewSubmit = createButton('Confirm booking and pay deposit', 'ebm-btn');
-		reviewBack.addEventListener('click', () => goToStep(4));
-		reviewSubmit.addEventListener('click', () => submitBooking(app));
+
+		reviewBack.addEventListener('click', function () {
+			goToStep(app, state, 4);
+		});
+
+		reviewSubmit.addEventListener('click', function () {
+			submitBooking(app, state);
+		});
+
 		reviewActions.append(reviewBack, reviewSubmit);
 		review.append(reviewBox, reviewActions);
 
 		shell.append(jobs, addons, dates, details, review);
 		app.appendChild(shell);
 
-		buildCalendar(dateInput, app);
-		loadJobs(app, jobList);
-		renderStepState();
+		buildCalendar(dateInput, app, state);
+		loadJobs(app, state, jobList);
+		renderStepState(app, state);
 	}
 
 	function init() {
-		const app = qs(selectors.app);
+		const apps = qsa('[data-ebm-booking-app], #ebm-booking-app, .ebm-booking-form');
 
-		if (!app) {
+		if (!apps.length) {
 			return;
 		}
 
-		buildFreshApp(app);
+		apps.forEach(function (app) {
+			if (app.dataset.ebmInitialised === '1') {
+				return;
+			}
+
+			app.dataset.ebmInitialised = '1';
+			buildFreshApp(app);
+		});
 	}
 
-	document.addEventListener('DOMContentLoaded', init);
+	if (document.readyState === 'loading') {
+		document.addEventListener('DOMContentLoaded', init);
+	} else {
+		init();
+	}
 })();
