@@ -47,6 +47,16 @@ final class EBM_REST {
 
 		register_rest_route(
 			'ebm/v1',
+			'/month-availability',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( __CLASS__, 'month_availability' ),
+				'permission_callback' => array( __CLASS__, 'nonce' ),
+			)
+		);
+
+		register_rest_route(
+			'ebm/v1',
 			'/quote',
 			array(
 				'methods'             => 'POST',
@@ -186,6 +196,96 @@ final class EBM_REST {
 				$addons
 			),
 		);
+	}
+
+	public static function month_availability( WP_REST_Request $request ) {
+		$month = sanitize_text_field( $request->get_param( 'month' ) );
+
+		if ( ! preg_match( '/^\d{4}-\d{2}$/', $month ) ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'Invalid month.', 'electrical-booking-manager' ),
+				),
+				400
+			);
+		}
+
+		$job_id = absint( $request->get_param( 'job_id' ) );
+
+		if ( ! $job_id ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'Please choose a job first.', 'electrical-booking-manager' ),
+				),
+				400
+			);
+		}
+
+		$addons = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
+
+		$cache_key = 'ebm_month_availability_' . md5(
+			wp_json_encode(
+				array(
+					'month'  => $month,
+					'job_id' => $job_id,
+					'addons' => $addons,
+				)
+			)
+		);
+
+		$cached = get_transient( $cache_key );
+
+		if ( false !== $cached && is_array( $cached ) ) {
+			return $cached;
+		}
+
+		$timezone = wp_timezone();
+
+		try {
+			$first_day = new DateTimeImmutable( $month . '-01 00:00:00', $timezone );
+		} catch ( Exception $e ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'Invalid month.', 'electrical-booking-manager' ),
+				),
+				400
+			);
+		}
+
+		$weekday_offset = (int) $first_day->format( 'N' ) - 1;
+		$calendar_start = $first_day->modify( '-' . $weekday_offset . ' days' );
+
+		$available_dates   = array();
+		$unavailable_dates = array();
+		$today             = new DateTimeImmutable( 'today', $timezone );
+
+		for ( $i = 0; $i < 42; $i++ ) {
+			$date_object = $calendar_start->modify( '+' . $i . ' days' );
+			$date        = $date_object->format( 'Y-m-d' );
+
+			if ( $date_object < $today ) {
+				$unavailable_dates[] = $date;
+				continue;
+			}
+
+			$slots = EBM_Scheduler::slots( $job_id, $date, $addons );
+
+			if ( empty( $slots ) ) {
+				$unavailable_dates[] = $date;
+			} else {
+				$available_dates[] = $date;
+			}
+		}
+
+		$response = array(
+			'month'             => $month,
+			'available_dates'   => $available_dates,
+			'unavailable_dates' => $unavailable_dates,
+		);
+
+		set_transient( $cache_key, $response, 60 );
+
+		return $response;
 	}
 
 	public static function quote( WP_REST_Request $request ) {

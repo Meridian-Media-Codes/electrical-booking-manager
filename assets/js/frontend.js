@@ -1,11 +1,12 @@
 (function () {
 	'use strict';
 
-	const memoryCache = {
+	const cache = {
 		jobs: null,
 		addons: {},
 		slots: {},
 		quotes: {},
+		months: {},
 	};
 
 	const appStates = new WeakMap();
@@ -20,21 +21,23 @@
 		});
 	};
 
-	function createInitialState() {
+	function config() {
+		const data = window.ebmBooking || {};
+
 		return {
-			step: 1,
-			jobId: null,
-			addons: {},
-			date: '',
-			time: '',
-			slots: [],
-			customer: {},
-			quote: null,
-			voucherCode: '',
-			calendarMonth: null,
-			addressAutocompleteReady: false,
-			addressSelectedFromGoogle: false,
+			restUrl: data.restUrl || '/wp-json/ebm/v1/',
+			nonce: data.nonce || '',
+			preloadedJobs: Array.isArray(data.preloadedJobs) ? data.preloadedJobs : [],
+			allowedPostcodePrefixes: Array.isArray(data.allowedPostcodePrefixes) && data.allowedPostcodePrefixes.length ? data.allowedPostcodePrefixes : ['FY'],
+			homeUrl: data.homeUrl || '/',
+			logoUrl: data.logoUrl || '',
+			i18n: data.i18n || {},
 		};
+	}
+
+	function t(key, fallback) {
+		const i18n = config().i18n;
+		return i18n && i18n[key] ? i18n[key] : fallback;
 	}
 
 	function qs(selector, root = document) {
@@ -47,6 +50,15 @@
 
 	function pad(value) {
 		return String(value).padStart(2, '0');
+	}
+
+	function escapeHtml(value) {
+		return String(value || '')
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/"/g, '&quot;')
+			.replace(/'/g, '&#039;');
 	}
 
 	function ukToIso(value) {
@@ -67,6 +79,51 @@
 		return `${parts[2]}-${parts[1]}-${parts[0]}`;
 	}
 
+	function isoToUk(value) {
+		if (!value) {
+			return '';
+		}
+
+		const parts = String(value).split('-');
+
+		if (parts.length !== 3) {
+			return value;
+		}
+
+		return `${parts[2]}/${parts[1]}/${parts[0]}`;
+	}
+
+	function monthKey(date) {
+		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
+	}
+
+	function isoFromDate(date) {
+		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+	}
+
+	function parseInputDate(value) {
+		if (!value) {
+			return null;
+		}
+
+		const iso = ukToIso(value);
+		const parts = iso.split('-');
+
+		if (parts.length !== 3) {
+			return null;
+		}
+
+		const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+
+		return Number.isNaN(date.getTime()) ? null : date;
+	}
+
+	function sameDate(a, b) {
+		return a.getFullYear() === b.getFullYear()
+			&& a.getMonth() === b.getMonth()
+			&& a.getDate() === b.getDate();
+	}
+
 	function formatMonthTitle(date) {
 		return date.toLocaleDateString('en-GB', {
 			month: 'long',
@@ -74,42 +131,55 @@
 		});
 	}
 
-	function dispatchChange(element) {
-		element.dispatchEvent(new Event('input', { bubbles: true }));
-		element.dispatchEvent(new Event('change', { bubbles: true }));
+	function formatDisplayDate(value) {
+		const iso = ukToIso(value);
+		const date = new Date(`${iso}T00:00:00`);
+
+		if (Number.isNaN(date.getTime())) {
+			return value || '';
+		}
+
+		return date.toLocaleDateString('en-GB', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+		});
 	}
 
-	function getConfig() {
-		const config = window.ebmBooking || {};
+	function money(value) {
+		return new Intl.NumberFormat('en-GB', {
+			style: 'currency',
+			currency: 'GBP',
+		}).format(Number(value || 0));
+	}
 
-		return {
-			restUrl: config.restUrl || '/wp-json/ebm/v1/',
-			nonce: config.nonce || '',
-			preloadedJobs: Array.isArray(config.preloadedJobs) ? config.preloadedJobs : [],
-			cacheVersion: config.cacheVersion || '1',
-			googlePlacesApiKey: config.googlePlacesApiKey || '',
-			allowedPostcodePrefixes: Array.isArray(config.allowedPostcodePrefixes) && config.allowedPostcodePrefixes.length ? config.allowedPostcodePrefixes : ['FY'],
-			homeUrl: config.homeUrl || '/',
-			logoUrl: config.logoUrl || '',
-			i18n: config.i18n || {},
-		};
+	function durationLabel(minutes) {
+		const total = Number(minutes || 0);
+
+		if (total >= 1440 && total % 1440 === 0) {
+			const days = total / 1440;
+			return `${days} ${days === 1 ? 'Day' : 'Days'}`;
+		}
+
+		if (total >= 60 && total % 60 === 0) {
+			const hours = total / 60;
+			return `${hours} ${hours === 1 ? 'Hour' : 'Hours'}`;
+		}
+
+		return `${total} Minutes`;
 	}
 
 	function apiUrl(path) {
-		const config = getConfig();
-		const base = config.restUrl.endsWith('/') ? config.restUrl : config.restUrl + '/';
-
+		const base = config().restUrl.endsWith('/') ? config().restUrl : `${config().restUrl}/`;
 		return base + path.replace(/^\//, '');
 	}
 
 	async function api(path, options = {}) {
-		const config = getConfig();
-
 		const response = await fetch(apiUrl(path), {
 			credentials: 'same-origin',
 			headers: {
 				'Content-Type': 'application/json',
-				'X-WP-Nonce': config.nonce,
+				'X-WP-Nonce': config().nonce,
 				...(options.headers || {}),
 			},
 			...options,
@@ -118,37 +188,26 @@
 		const body = await response.json().catch(() => null);
 
 		if (!response.ok) {
-			const message = body && body.message ? body.message : 'Something went wrong.';
-			throw new Error(message);
+			throw new Error(body && body.message ? body.message : 'Something went wrong.');
 		}
 
 		return body;
 	}
 
-	function cacheKey(prefix, data) {
-		return prefix + ':' + JSON.stringify(data);
-	}
-
-	function createButton(text, className, type = 'button') {
-		const button = document.createElement('button');
-		button.type = type;
-		button.className = className;
-		button.textContent = text;
-
-		return button;
-	}
-
-	function setMessage(app, message, type = 'error') {
-		let box = qs('.ebm-live-message', app);
-
-		if (!box) {
-			box = document.createElement('div');
-			box.className = 'ebm-live-message';
-			app.prepend(box);
-		}
-
-		box.className = `ebm-live-message ebm-${type}`;
-		box.textContent = message;
+	function makeState() {
+		return {
+			step: 1,
+			jobId: null,
+			addons: {},
+			date: '',
+			time: '',
+			slots: [],
+			customer: {},
+			quote: null,
+			voucherCode: '',
+			calendarMonth: null,
+			addressAutocompleteReady: false,
+		};
 	}
 
 	function clearMessage(app) {
@@ -157,6 +216,23 @@
 		if (box) {
 			box.remove();
 		}
+	}
+
+	function message(app, text, type = 'error') {
+		clearMessage(app);
+
+		const box = document.createElement('div');
+		box.className = `ebm-live-message ebm-${type}`;
+		box.textContent = text;
+		app.prepend(box);
+	}
+
+	function createButton(text, className, type = 'button') {
+		const button = document.createElement('button');
+		button.type = type;
+		button.className = className;
+		button.textContent = text;
+		return button;
 	}
 
 	function stepHeader(app, state) {
@@ -184,15 +260,15 @@
 	}
 
 	function screen(step, title) {
-		const div = document.createElement('section');
-		div.className = 'ebm-step-screen';
-		div.dataset.step = String(step);
+		const section = document.createElement('section');
+		section.className = 'ebm-step-screen';
+		section.dataset.step = String(step);
 
-		const h2 = document.createElement('h2');
-		h2.textContent = title;
-		div.appendChild(h2);
+		const heading = document.createElement('h2');
+		heading.textContent = title;
+		section.appendChild(heading);
 
-		return div;
+		return section;
 	}
 
 	function canMoveToStep(state, step) {
@@ -211,6 +287,18 @@
 		return true;
 	}
 
+	function renderStepState(app, state) {
+		qsa('.ebm-step-screen', app).forEach(function (section) {
+			section.classList.toggle('is-active', Number(section.dataset.step) === state.step);
+		});
+
+		qsa('.ebm-step-pill', app).forEach(function (pill) {
+			const step = Number(pill.dataset.step);
+			pill.classList.toggle('is-active', step === state.step);
+			pill.classList.toggle('is-done', step < state.step);
+		});
+	}
+
 	function goToStep(app, state, step) {
 		state.step = step;
 		renderStepState(app, state);
@@ -225,219 +313,43 @@
 		}
 	}
 
-	function renderStepState(app, state) {
-		qsa('.ebm-step-screen', app).forEach(function (section) {
-			section.classList.toggle('is-active', Number(section.dataset.step) === state.step);
-		});
-
-		qsa('.ebm-step-pill', app).forEach(function (pill) {
-			const step = Number(pill.dataset.step);
-			pill.classList.toggle('is-active', step === state.step);
-			pill.classList.toggle('is-done', step < state.step);
-		});
+	function normalisePostcode(value) {
+		return String(value || '').toUpperCase().replace(/\s+/g, '');
 	}
 
-	function money(value) {
-		const number = Number(value || 0);
+	function postcodeAllowed(value) {
+		const compact = normalisePostcode(value);
 
-		return new Intl.NumberFormat('en-GB', {
-			style: 'currency',
-			currency: 'GBP',
-		}).format(number);
-	}
-
-	function formatDisplayDate(dateString) {
-		if (!dateString) {
-			return '';
-		}
-
-		const iso = ukToIso(dateString);
-		const date = new Date(`${iso}T00:00:00`);
-
-		if (Number.isNaN(date.getTime())) {
-			return dateString;
-		}
-
-		return date.toLocaleDateString('en-GB', {
-			day: '2-digit',
-			month: '2-digit',
-			year: 'numeric',
-		});
-	}
-
-	function i18n(key, fallback) {
-		const config = getConfig();
-		return config.i18n && config.i18n[key] ? config.i18n[key] : fallback;
-	}
-
-	function buildSuccessScreen(data) {
-		const config = getConfig();
-		const title = data.title || i18n('booking_success', 'Booking successful');
-		const text = data.text || i18n('booking_success_text', 'Your booking has been received successfully.');
-		const date = data.date ? formatDisplayDate(data.date) : '';
-		const time = data.time || '';
-		const reference = data.reference || '';
-
-		const logo = config.logoUrl ? `
-			<div class="ebm-success-logo-wrap">
-				<img src="${escapeHtml(config.logoUrl)}" alt="" class="ebm-success-logo">
-			</div>
-		` : '';
-
-		let meta = '';
-
-		if (date || time || reference) {
-			meta += '<div class="ebm-success-meta">';
-
-			if (date) {
-				meta += `<div class="ebm-success-meta-row"><span>Date</span><strong>${escapeHtml(date)}</strong></div>`;
-			}
-
-			if (time) {
-				meta += `<div class="ebm-success-meta-row"><span>Time</span><strong>${escapeHtml(time)}</strong></div>`;
-			}
-
-			if (reference) {
-				meta += `<div class="ebm-success-meta-row"><span>Reference</span><strong>#${escapeHtml(reference)}</strong></div>`;
-			}
-
-			meta += '</div>';
-		}
-
-		return `
-			<div class="ebm-booking-shell ebm-success-shell">
-				<div class="ebm-success-screen">
-					<div class="ebm-success-art" aria-hidden="true">
-						<div class="ebm-success-calendar">
-							<div class="ebm-success-calendar-top"></div>
-							<div class="ebm-success-calendar-grid">
-								<span></span><span></span><span></span><span></span>
-								<span></span><span></span><span></span><span></span>
-								<span></span><span></span><span></span><span></span>
-							</div>
-						</div>
-						<div class="ebm-success-tick">
-							<svg viewBox="0 0 52 52" aria-hidden="true">
-								<circle cx="26" cy="26" r="26"></circle>
-								<path d="M14 27.5l8 8L38 19.5"></path>
-							</svg>
-						</div>
-					</div>
-
-					${logo}
-
-					<h2 class="ebm-success-title">${escapeHtml(title)}</h2>
-					<p class="ebm-success-text">${escapeHtml(text)}</p>
-
-					${meta}
-
-					<div class="ebm-success-actions">
-						<a class="ebm-btn" href="${escapeHtml(config.homeUrl)}">${escapeHtml(i18n('back_home', 'Back to home'))}</a>
-						<button type="button" class="ebm-btn ebm-btn-secondary" data-ebm-book-again>${escapeHtml(i18n('make_another', 'Make another booking'))}</button>
-					</div>
-				</div>
-			</div>
-		`;
-	}
-
-	function showSuccessScreen(app, data) {
-		app.classList.add('ebm-has-success');
-		app.innerHTML = buildSuccessScreen(data || {});
-
-		const againButton = qs('[data-ebm-book-again]', app);
-
-		if (againButton) {
-			againButton.addEventListener('click', function () {
-				const cleanUrl = window.location.origin + window.location.pathname;
-				window.location.href = cleanUrl;
-			});
-		}
-
-		if (window.history && window.history.replaceState) {
-			const url = new URL(window.location.href);
-			url.searchParams.delete('payment');
-			url.searchParams.delete('ebm_booking');
-			window.history.replaceState({}, document.title, url.toString());
-		}
-	}
-
-	function handleReturnState(app) {
-		const params = new URLSearchParams(window.location.search);
-		const payment = params.get('payment');
-
-		if ('success' === payment) {
-			showSuccessScreen(app, {
-				title: i18n('booking_success', 'Booking successful'),
-				text: i18n('payment_success_text', 'Your payment was successful and your booking is confirmed.'),
-			});
-
-			return true;
-		}
-
-		if ('cancelled' === payment) {
-			setMessage(app, 'Payment was cancelled. Your booking has not been confirmed.', 'error');
-
-			if (window.history && window.history.replaceState) {
-				const url = new URL(window.location.href);
-				url.searchParams.delete('payment');
-				url.searchParams.delete('ebm_booking');
-				window.history.replaceState({}, document.title, url.toString());
-			}
-		}
-
-		return false;
-	}
-
-	function durationLabel(minutes) {
-		const total = Number(minutes || 0);
-
-		if (total >= 1440 && total % 1440 === 0) {
-			const days = total / 1440;
-			return `${days} ${days === 1 ? 'Day' : 'Days'}`;
-		}
-
-		if (total >= 60 && total % 60 === 0) {
-			const hours = total / 60;
-			return `${hours} ${hours === 1 ? 'Hour' : 'Hours'}`;
-		}
-
-		return `${total} Minutes`;
-	}
-
-	function normalisePostcode(postcode) {
-		return String(postcode || '').toUpperCase().replace(/\s+/g, '');
-	}
-
-	function postcodeAllowed(postcode) {
-		const compact = normalisePostcode(postcode);
-		const config = getConfig();
-
-		return config.allowedPostcodePrefixes.some(function (prefix) {
-			const cleanPrefix = String(prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-			return cleanPrefix && compact.startsWith(cleanPrefix);
+		return config().allowedPostcodePrefixes.some(function (prefix) {
+			const clean = String(prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+			return clean && compact.startsWith(clean);
 		});
 	}
 
 	function allowedPostcodeLabel() {
-		return getConfig().allowedPostcodePrefixes.join(', ');
+		return config().allowedPostcodePrefixes.join(', ');
 	}
 
-	function renderJobs(app, state, target, list) {
+	function cacheKey(prefix, data) {
+		return `${prefix}:${JSON.stringify(data)}`;
+	}
+
+	function renderJobs(app, state, target, jobs) {
 		target.innerHTML = '';
 
-		if (!list.length) {
+		if (!jobs.length) {
 			target.innerHTML = '<div class="ebm-empty">No jobs are available yet.</div>';
 			return;
 		}
 
-		list.forEach(function (job) {
+		jobs.forEach(function (job) {
 			const button = document.createElement('button');
 			button.type = 'button';
 			button.className = 'ebm-job-card';
 			button.dataset.jobId = job.id;
 			button.innerHTML = `
-				<span class="ebm-job-title">${escapeHtml(job.title || job.name || 'Job')}</span>
-				<span class="ebm-job-meta">${durationLabel(job.duration_minutes || job.duration || 0)}</span>
+				<span class="ebm-job-title">${escapeHtml(job.title || 'Job')}</span>
+				<span class="ebm-job-meta">${durationLabel(job.duration_minutes || 0)}</span>
 			`;
 
 			button.addEventListener('click', async function () {
@@ -448,6 +360,8 @@
 				state.slots = [];
 				state.quote = null;
 				state.voucherCode = '';
+
+				cache.months = {};
 
 				qsa('.ebm-job-card', target).forEach(function (card) {
 					card.classList.remove('is-selected');
@@ -467,22 +381,22 @@
 	}
 
 	async function loadJobs(app, state, target) {
-		const config = getConfig();
+		const preloaded = config().preloadedJobs;
 
-		if (memoryCache.jobs && memoryCache.jobs.length) {
-			renderJobs(app, state, target, memoryCache.jobs);
+		if (cache.jobs && cache.jobs.length) {
+			renderJobs(app, state, target, cache.jobs);
 			return;
 		}
 
-		if (config.preloadedJobs.length) {
-			memoryCache.jobs = config.preloadedJobs;
-			renderJobs(app, state, target, memoryCache.jobs);
+		if (preloaded.length) {
+			cache.jobs = preloaded;
+			renderJobs(app, state, target, cache.jobs);
 
 			api('jobs')
-				.then(function (jobs) {
-					const list = Array.isArray(jobs) ? jobs : (jobs.jobs || []);
-					if (list.length) {
-						memoryCache.jobs = list;
+				.then(function (response) {
+					const jobs = Array.isArray(response) ? response : (response.jobs || []);
+					if (jobs.length) {
+						cache.jobs = jobs;
 					}
 				})
 				.catch(function () {});
@@ -493,10 +407,10 @@
 		target.innerHTML = '<div class="ebm-loading">Loading jobs...</div>';
 
 		try {
-			const jobs = await api('jobs');
-			const list = Array.isArray(jobs) ? jobs : (jobs.jobs || []);
-			memoryCache.jobs = list;
-			renderJobs(app, state, target, list);
+			const response = await api('jobs');
+			const jobs = Array.isArray(response) ? response : (response.jobs || []);
+			cache.jobs = jobs;
+			renderJobs(app, state, target, jobs);
 		} catch (error) {
 			target.innerHTML = `<div class="ebm-error">${escapeHtml(error.message)}</div>`;
 		}
@@ -505,14 +419,14 @@
 	async function loadAddons(app, state) {
 		const target = qs('[data-ebm-addons]', app);
 
-		if (!target) {
+		if (!target || !state.jobId) {
 			return;
 		}
 
 		const key = String(state.jobId);
 
-		if (memoryCache.addons[key]) {
-			renderAddons(app, state, target, memoryCache.addons[key]);
+		if (cache.addons[key]) {
+			renderAddons(app, state, target, cache.addons[key]);
 			return;
 		}
 
@@ -521,7 +435,7 @@
 		try {
 			const response = await api(`addons?job_id=${encodeURIComponent(state.jobId)}`);
 			const addons = Array.isArray(response) ? response : (response.addons || []);
-			memoryCache.addons[key] = addons;
+			cache.addons[key] = addons;
 			renderAddons(app, state, target, addons);
 		} catch (error) {
 			target.innerHTML = `<div class="ebm-error">${escapeHtml(error.message)}</div>`;
@@ -529,12 +443,12 @@
 	}
 
 	function renderAddons(app, state, target, addons) {
+		target.innerHTML = '';
+
 		if (!addons.length) {
 			target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this job.</div>';
 			return;
 		}
-
-		target.innerHTML = '';
 
 		addons.forEach(function (addon) {
 			const min = Number(addon.min_qty || 0);
@@ -545,7 +459,7 @@
 			card.innerHTML = `
 				<div class="ebm-addon-inner">
 					<div>
-						<span class="ebm-addon-title">${escapeHtml(addon.title || addon.name || 'Add-on')}</span>
+						<span class="ebm-addon-title">${escapeHtml(addon.title || 'Add-on')}</span>
 						${addon.description ? `<div class="ebm-addon-description">${escapeHtml(addon.description)}</div>` : ''}
 						<span class="ebm-addon-meta">${durationLabel(addon.extra_duration_minutes || 0)} per item</span>
 					</div>
@@ -578,6 +492,10 @@
 				state.slots = [];
 				state.quote = null;
 				state.voucherCode = '';
+
+				cache.months = {};
+				cache.slots = {};
+				cache.quotes = {};
 			});
 
 			target.appendChild(card);
@@ -587,12 +505,7 @@
 	async function loadSlots(app, state) {
 		const target = qs('[data-ebm-slots]', app);
 
-		if (!target) {
-			return;
-		}
-
-		if (!state.jobId || !state.date) {
-			target.innerHTML = '';
+		if (!target || !state.jobId || !state.date) {
 			return;
 		}
 
@@ -602,9 +515,9 @@
 			addons: state.addons,
 		});
 
-		if (memoryCache.slots[key]) {
-			state.slots = memoryCache.slots[key];
-			renderSlots(app, state, target, memoryCache.slots[key]);
+		if (cache.slots[key]) {
+			state.slots = cache.slots[key];
+			renderSlots(app, state, target, cache.slots[key]);
 			return;
 		}
 
@@ -621,9 +534,8 @@
 			});
 
 			const slots = Array.isArray(response) ? response : (response.slots || []);
-			memoryCache.slots[key] = slots;
+			cache.slots[key] = slots;
 			state.slots = slots;
-
 			renderSlots(app, state, target, slots);
 		} catch (error) {
 			target.innerHTML = `<div class="ebm-error">${escapeHtml(error.message)}</div>`;
@@ -631,12 +543,12 @@
 	}
 
 	function renderSlots(app, state, target, slots) {
+		target.innerHTML = '';
+
 		if (!slots.length) {
 			target.innerHTML = '<div class="ebm-empty">No available times for this date. Please choose another date.</div>';
 			return;
 		}
-
-		target.innerHTML = '';
 
 		slots.forEach(function (slot) {
 			const time = slot.time || slot.start || slot.label;
@@ -649,7 +561,6 @@
 			button.type = 'button';
 			button.className = 'ebm-slot';
 			button.textContent = time;
-			button.dataset.time = time;
 
 			button.addEventListener('click', function () {
 				state.time = time;
@@ -670,6 +581,67 @@
 		});
 	}
 
+	function applyMonthAvailability(popover, unavailableDates) {
+		const unavailable = Array.isArray(unavailableDates) ? unavailableDates : [];
+
+		qsa('.ebm-cal-day', popover).forEach(function (button) {
+			const date = button.dataset.date || '';
+
+			if (!date) {
+				return;
+			}
+
+			if (unavailable.includes(date)) {
+				button.classList.add('is-unavailable');
+				button.disabled = true;
+				button.setAttribute('aria-disabled', 'true');
+				button.setAttribute('title', 'No available times');
+			} else {
+				button.classList.remove('is-unavailable');
+				button.disabled = false;
+				button.removeAttribute('aria-disabled');
+				button.removeAttribute('title');
+			}
+		});
+	}
+
+	async function loadMonthAvailability(app, state, monthDate, popover) {
+		if (!state.jobId || !monthDate || !popover) {
+			return;
+		}
+
+		const key = cacheKey('month', {
+			job_id: state.jobId,
+			month: monthKey(monthDate),
+			addons: state.addons,
+		});
+
+		if (cache.months[key]) {
+			applyMonthAvailability(popover, cache.months[key].unavailable_dates || []);
+			return;
+		}
+
+		popover.classList.add('is-checking-availability');
+
+		try {
+			const response = await api('month-availability', {
+				method: 'POST',
+				body: JSON.stringify({
+					job_id: state.jobId,
+					month: monthKey(monthDate),
+					addons: state.addons,
+				}),
+			});
+
+			cache.months[key] = response;
+			applyMonthAvailability(popover, response.unavailable_dates || []);
+		} catch (error) {
+			/* Day-level slot checks still protect the flow if this endpoint fails. */
+		} finally {
+			popover.classList.remove('is-checking-availability');
+		}
+	}
+
 	async function loadQuote(state, bypassCache) {
 		const key = cacheKey('quote', {
 			job_id: state.jobId,
@@ -677,9 +649,9 @@
 			voucher_code: state.voucherCode || '',
 		});
 
-		if (!bypassCache && memoryCache.quotes[key]) {
-			state.quote = memoryCache.quotes[key];
-			return memoryCache.quotes[key];
+		if (!bypassCache && cache.quotes[key]) {
+			state.quote = cache.quotes[key];
+			return cache.quotes[key];
 		}
 
 		const response = await api('quote', {
@@ -692,7 +664,7 @@
 		});
 
 		state.quote = response;
-		memoryCache.quotes[key] = response;
+		cache.quotes[key] = response;
 
 		return response;
 	}
@@ -738,7 +710,7 @@
 
 	async function applyVoucher(app, state) {
 		const input = qs('[data-ebm-voucher-input]', app);
-		const message = qs('[data-ebm-voucher-message]', app);
+		const output = qs('[data-ebm-voucher-message]', app);
 
 		if (!input) {
 			return;
@@ -747,42 +719,45 @@
 		state.voucherCode = input.value.trim().toUpperCase();
 
 		if (!state.voucherCode) {
-			if (message) {
-				message.className = 'ebm-voucher-message ebm-error';
-				message.textContent = 'Enter a voucher code.';
+			if (output) {
+				output.className = 'ebm-voucher-message ebm-error';
+				output.textContent = 'Enter a voucher code.';
 			}
 			return;
 		}
 
-		if (message) {
-			message.className = 'ebm-voucher-message ebm-loading';
-			message.textContent = 'Checking voucher...';
+		if (output) {
+			output.className = 'ebm-voucher-message ebm-loading';
+			output.textContent = 'Checking voucher...';
 		}
 
 		try {
 			await loadQuote(state, true);
 			renderReview(app, state);
 
-			if (message) {
-				const discountAmount = Number(state.quote.discount_amount || 0);
+			if (output) {
+				const amount = Number(state.quote.discount_amount || 0);
 
-				if (discountAmount > 0) {
-					message.className = 'ebm-voucher-message ebm-success';
-					message.textContent = `Voucher applied. You saved ${money(discountAmount)}.`;
+				if (amount > 0) {
+					output.className = 'ebm-voucher-message ebm-success';
+					output.textContent = `Voucher applied. You saved ${money(amount)}.`;
 				} else {
-					message.className = 'ebm-voucher-message ebm-error';
-					message.textContent = 'This voucher did not change the total.';
+					output.className = 'ebm-voucher-message ebm-error';
+					output.textContent = 'This voucher did not change the total.';
 				}
 			}
 		} catch (error) {
 			state.voucherCode = '';
 			state.quote = null;
-			await loadQuote(state, true);
-			renderReview(app, state);
 
-			if (message) {
-				message.className = 'ebm-voucher-message ebm-error';
-				message.textContent = error.message;
+			try {
+				await loadQuote(state, true);
+				renderReview(app, state);
+			} catch (secondError) {}
+
+			if (output) {
+				output.className = 'ebm-voucher-message ebm-error';
+				output.textContent = error.message;
 			}
 		}
 	}
@@ -807,24 +782,14 @@
 		return component ? component.shortText || component.short_name || component.longText || component.long_name || '' : '';
 	}
 
-	function showAddressMessage(app, message, type) {
-		const box = qs('[data-ebm-address-message]', app);
-
-		if (!box) {
-			return;
-		}
-
-		box.className = `ebm-address-message ebm-${type || 'error'}`;
-		box.textContent = message;
+	function valueOf(root, selector) {
+		const element = qs(selector, root);
+		return element ? element.value.trim() : '';
 	}
 
-	function clearAddressMessage(app) {
-		const box = qs('[data-ebm-address-message]', app);
-
-		if (box) {
-			box.className = 'ebm-address-message';
-			box.textContent = '';
-		}
+	function dispatchChange(element) {
+		element.dispatchEvent(new Event('input', { bubbles: true }));
+		element.dispatchEvent(new Event('change', { bubbles: true }));
 	}
 
 	function updateAddressPreview(root) {
@@ -833,9 +798,8 @@
 		const town = valueOf(root, '[name="town"]');
 		const county = valueOf(root, '[name="county"]');
 		const postcode = valueOf(root, '[name="postcode"]');
-
-		const parts = [line1, line2, town, county, postcode].filter(Boolean);
 		const preview = qs('[data-ebm-address-preview]', root);
+		const parts = [line1, line2, town, county, postcode].filter(Boolean);
 
 		if (!preview) {
 			return;
@@ -849,7 +813,27 @@
 		preview.innerHTML = `<strong>Service address preview</strong><span>${escapeHtml(parts.join(', '))}</span>`;
 	}
 
-	function fillAddressFromComponents(app, state, components) {
+	function showAddressMessage(app, text, type) {
+		const box = qs('[data-ebm-address-message]', app);
+
+		if (!box) {
+			return;
+		}
+
+		box.className = `ebm-address-message ebm-${type || 'error'}`;
+		box.textContent = text;
+	}
+
+	function clearAddressMessage(app) {
+		const box = qs('[data-ebm-address-message]', app);
+
+		if (box) {
+			box.className = 'ebm-address-message';
+			box.textContent = '';
+		}
+	}
+
+	function fillAddressFromComponents(app, components) {
 		const streetNumber = componentLong(components, 'street_number');
 		const route = componentLong(components, 'route');
 		const premise = componentLong(components, 'premise');
@@ -862,38 +846,23 @@
 		const line1Value = [subpremise, premise || streetNumber].filter(Boolean).join(', ');
 		const townValue = postalTown || locality;
 
-		const line1 = qs('[name="address_line_1"]', app);
-		const line2 = qs('[name="address_line_2"]', app);
-		const town = qs('[name="town"]', app);
-		const countyInput = qs('[name="county"]', app);
-		const postcodeInput = qs('[name="postcode"]', app);
+		const fields = {
+			'[name="address_line_1"]': line1Value || streetNumber || premise || '',
+			'[name="address_line_2"]': route || '',
+			'[name="town"]': townValue || '',
+			'[name="county"]': county || '',
+			'[name="postcode"]': postcode || '',
+		};
 
-		if (line1) {
-			line1.value = line1Value || streetNumber || premise || '';
-			dispatchChange(line1);
-		}
+		Object.keys(fields).forEach(function (selector) {
+			const input = qs(selector, app);
 
-		if (line2) {
-			line2.value = route || '';
-			dispatchChange(line2);
-		}
+			if (input) {
+				input.value = fields[selector];
+				dispatchChange(input);
+			}
+		});
 
-		if (town) {
-			town.value = townValue || '';
-			dispatchChange(town);
-		}
-
-		if (countyInput) {
-			countyInput.value = county || '';
-			dispatchChange(countyInput);
-		}
-
-		if (postcodeInput) {
-			postcodeInput.value = postcode || '';
-			dispatchChange(postcodeInput);
-		}
-
-		state.addressSelectedFromGoogle = true;
 		updateAddressPreview(app);
 
 		if (!postcode) {
@@ -916,11 +885,7 @@
 
 		const mount = qs('[data-ebm-place-autocomplete-mount]', app);
 
-		if (!mount) {
-			return;
-		}
-
-		if (!window.google || !window.google.maps || !window.google.maps.importLibrary) {
+		if (!mount || !window.google || !window.google.maps || !window.google.maps.importLibrary) {
 			return;
 		}
 
@@ -970,15 +935,14 @@
 					return;
 				}
 
-				const place = prediction.toPlace();
-
 				try {
+					const place = prediction.toPlace();
+
 					await place.fetchFields({
 						fields: ['addressComponents', 'formattedAddress', 'displayName'],
 					});
 
-					const components = place.addressComponents || [];
-					fillAddressFromComponents(app, state, components);
+					fillAddressFromComponents(app, place.addressComponents || []);
 				} catch (error) {
 					showAddressMessage(app, 'The selected address could not be loaded. Please enter it manually.', 'error');
 				}
@@ -987,6 +951,125 @@
 			state.addressAutocompleteReady = false;
 			showAddressMessage(app, 'Google address search could not load. Please enter the address manually.', 'error');
 		}
+	}
+
+	function getCustomer(app) {
+		const line1 = valueOf(app, '[name="address_line_1"]');
+		const line2 = valueOf(app, '[name="address_line_2"]');
+		const town = valueOf(app, '[name="town"]');
+		const county = valueOf(app, '[name="county"]');
+		const postcode = valueOf(app, '[name="postcode"]');
+		const address = [line1, line2, town, county, postcode].filter(Boolean).join('\n');
+
+		return {
+			name: valueOf(app, '[name="name"]'),
+			email: valueOf(app, '[name="email"]'),
+			phone: valueOf(app, '[name="phone"]'),
+			line_1: line1,
+			line_2: line2,
+			town: town,
+			county: county,
+			postcode: postcode,
+			address: address,
+			privacy: !!qs('[name="privacy"]', app)?.checked,
+		};
+	}
+
+	function buildSuccessScreen(data) {
+		const logo = config().logoUrl ? `
+			<div class="ebm-success-logo-wrap">
+				<img src="${escapeHtml(config().logoUrl)}" alt="" class="ebm-success-logo">
+			</div>
+		` : '';
+
+		const meta = `
+			<div class="ebm-success-meta">
+				${data.date ? `<div class="ebm-success-meta-row"><span>Date</span><strong>${escapeHtml(formatDisplayDate(data.date))}</strong></div>` : ''}
+				${data.time ? `<div class="ebm-success-meta-row"><span>Time</span><strong>${escapeHtml(data.time)}</strong></div>` : ''}
+				${data.reference ? `<div class="ebm-success-meta-row"><span>Reference</span><strong>#${escapeHtml(data.reference)}</strong></div>` : ''}
+			</div>
+		`;
+
+		return `
+			<div class="ebm-booking-shell ebm-success-shell">
+				<div class="ebm-success-screen">
+					<div class="ebm-success-art" aria-hidden="true">
+						<div class="ebm-success-calendar">
+							<div class="ebm-success-calendar-top"></div>
+							<div class="ebm-success-calendar-grid">
+								<span></span><span></span><span></span><span></span>
+								<span></span><span></span><span></span><span></span>
+								<span></span><span></span><span></span><span></span>
+							</div>
+						</div>
+						<div class="ebm-success-tick">
+							<svg viewBox="0 0 52 52" aria-hidden="true">
+								<circle cx="26" cy="26" r="26"></circle>
+								<path d="M14 27.5l8 8L38 19.5"></path>
+							</svg>
+						</div>
+					</div>
+
+					${logo}
+
+					<h2 class="ebm-success-title">${escapeHtml(data.title || t('booking_success', 'Booking successful'))}</h2>
+					<p class="ebm-success-text">${escapeHtml(data.text || t('booking_success_text', 'Your booking has been received successfully.'))}</p>
+
+					${meta}
+
+					<div class="ebm-success-actions">
+						<a class="ebm-btn" href="${escapeHtml(config().homeUrl)}">${escapeHtml(t('back_home', 'Back to home'))}</a>
+						<button type="button" class="ebm-btn ebm-btn-secondary" data-ebm-book-again>${escapeHtml(t('make_another', 'Make another booking'))}</button>
+					</div>
+				</div>
+			</div>
+		`;
+	}
+
+	function showSuccess(app, data) {
+		app.classList.add('ebm-has-success');
+		app.innerHTML = buildSuccessScreen(data || {});
+
+		const again = qs('[data-ebm-book-again]', app);
+
+		if (again) {
+			again.addEventListener('click', function () {
+				window.location.href = window.location.origin + window.location.pathname;
+			});
+		}
+
+		if (window.history && window.history.replaceState) {
+			const url = new URL(window.location.href);
+			url.searchParams.delete('payment');
+			url.searchParams.delete('ebm_booking');
+			window.history.replaceState({}, document.title, url.toString());
+		}
+	}
+
+	function handleReturnState(app) {
+		const params = new URLSearchParams(window.location.search);
+
+		if (params.get('payment') === 'success') {
+			showSuccess(app, {
+				title: t('booking_success', 'Booking successful'),
+				text: t('payment_success_text', 'Your payment was successful and your booking is confirmed.'),
+			});
+
+			return true;
+		}
+
+		if (params.get('payment') === 'cancelled') {
+			message(app, 'Payment was cancelled. Your booking has not been confirmed.', 'error');
+
+			if (window.history && window.history.replaceState) {
+				const url = new URL(window.location.href);
+				url.searchParams.delete('payment');
+				url.searchParams.delete('ebm_booking');
+				window.history.replaceState({}, document.title, url.toString());
+			}
+		}
+
+		return false;
 	}
 
 	async function submitBooking(app, state) {
@@ -1005,61 +1088,25 @@
 				}),
 			});
 
-			memoryCache.slots = {};
-			memoryCache.quotes = {};
+			cache.slots = {};
+			cache.quotes = {};
+			cache.months = {};
 
 			if (response && response.checkout_url) {
 				window.location.href = response.checkout_url;
 				return;
 			}
 
-			showSuccessScreen(app, {
-				title: i18n('booking_success', 'Booking successful'),
-				text: response.message || i18n('booking_success_text', 'Your booking has been received successfully.'),
+			showSuccess(app, {
+				title: t('booking_success', 'Booking successful'),
+				text: response.message || t('booking_success_text', 'Your booking has been received successfully.'),
 				date: state.date,
 				time: state.time,
 				reference: response.booking_id || '',
 			});
 		} catch (error) {
-			setMessage(app, error.message, 'error');
+			message(app, error.message, 'error');
 		}
-	}
-
-	function getCustomer(app) {
-		const line1 = valueOf(app, '[name="address_line_1"]');
-		const line2 = valueOf(app, '[name="address_line_2"]');
-		const town = valueOf(app, '[name="town"]');
-		const county = valueOf(app, '[name="county"]');
-		const postcode = valueOf(app, '[name="postcode"]');
-
-		const addressParts = [line1, line2, town, county, postcode].filter(Boolean);
-
-		return {
-			name: valueOf(app, '[name="name"]'),
-			email: valueOf(app, '[name="email"]'),
-			phone: valueOf(app, '[name="phone"]'),
-			postcode: postcode,
-			line_1: line1,
-			line_2: line2,
-			town: town,
-			county: county,
-			address: addressParts.join('\n'),
-			privacy: !!qs('[name="privacy"]', app)?.checked,
-		};
-	}
-
-	function valueOf(root, selector) {
-		const element = qs(selector, root);
-		return element ? element.value.trim() : '';
-	}
-
-	function escapeHtml(value) {
-		return String(value || '')
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(/"/g, '&quot;')
-			.replace(/'/g, '&#039;');
 	}
 
 	function buildCalendar(input, app, state) {
@@ -1142,6 +1189,7 @@
 				button.type = 'button';
 				button.className = 'ebm-cal-day';
 				button.textContent = String(date.getDate());
+				button.dataset.date = isoFromDate(date);
 
 				if (date.getMonth() !== monthIndex) {
 					button.classList.add('is-muted');
@@ -1159,10 +1207,13 @@
 					event.preventDefault();
 					event.stopPropagation();
 
+					if (button.disabled || button.classList.contains('is-unavailable')) {
+						return;
+					}
+
 					input.value = `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
 					state.date = input.value;
 					state.time = '';
-					dispatchChange(input);
 					toggle(false);
 					await loadSlots(app, state);
 				});
@@ -1189,6 +1240,8 @@
 				render();
 				toggle(true);
 			});
+
+			loadMonthAvailability(app, state, month, popover);
 		}
 
 		trigger.addEventListener('click', function (event) {
@@ -1197,10 +1250,6 @@
 
 			render();
 			toggle(!popover.classList.contains('is-open'));
-		});
-
-		popover.addEventListener('click', function (event) {
-			event.stopPropagation();
 		});
 
 		input.addEventListener('focus', function () {
@@ -1214,6 +1263,10 @@
 			await loadSlots(app, state);
 		});
 
+		popover.addEventListener('click', function (event) {
+			event.stopPropagation();
+		});
+
 		document.addEventListener('click', function (event) {
 			if (!wrap.contains(event.target)) {
 				toggle(false);
@@ -1221,31 +1274,8 @@
 		});
 	}
 
-	function parseInputDate(value) {
-		if (!value) {
-			return null;
-		}
-
-		const iso = ukToIso(value);
-		const parts = iso.split('-');
-
-		if (parts.length !== 3) {
-			return null;
-		}
-
-		const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-
-		return Number.isNaN(date.getTime()) ? null : date;
-	}
-
-	function sameDate(a, b) {
-		return a.getFullYear() === b.getFullYear()
-			&& a.getMonth() === b.getMonth()
-			&& a.getDate() === b.getDate();
-	}
-
-	function buildFreshApp(app) {
-		const state = createInitialState();
+	function buildApp(app) {
+		const state = makeState();
 		appStates.set(app, state);
 
 		if (handleReturnState(app)) {
@@ -1256,7 +1286,6 @@
 
 		const shell = document.createElement('div');
 		shell.className = 'ebm-booking-shell';
-
 		shell.appendChild(stepHeader(app, state));
 
 		const jobs = screen(1, 'Choose the job');
@@ -1266,13 +1295,14 @@
 		jobs.appendChild(jobList);
 
 		const addons = screen(2, 'Choose add-ons');
-		const addonText = document.createElement('p');
-		addonText.textContent = 'Prices are hidden until the final step.';
+		addons.innerHTML += '<p>Prices are hidden until the final step.</p>';
 		const addonList = document.createElement('div');
 		addonList.className = 'ebm-addon-list';
 		addonList.dataset.ebmAddons = '';
+
 		const addonActions = document.createElement('div');
 		addonActions.className = 'ebm-actions';
+
 		const addonBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const addonNext = createButton('Continue', 'ebm-btn');
 
@@ -1285,20 +1315,25 @@
 		});
 
 		addonActions.append(addonBack, addonNext);
-		addons.append(addonText, addonList, addonActions);
+		addons.append(addonList, addonActions);
 
 		const dates = screen(3, 'Choose date and time');
 		const dateLabel = document.createElement('label');
 		dateLabel.textContent = 'Start date';
+
 		const dateInput = document.createElement('input');
-		dateInput.type = 'text';
 		dateInput.name = 'date';
+		dateInput.type = 'text';
+
 		dateLabel.appendChild(dateInput);
-		const slots = document.createElement('div');
-		slots.className = 'ebm-slot-grid';
-		slots.dataset.ebmSlots = '';
+
+		const slotGrid = document.createElement('div');
+		slotGrid.className = 'ebm-slot-grid';
+		slotGrid.dataset.ebmSlots = '';
+
 		const dateActions = document.createElement('div');
 		dateActions.className = 'ebm-actions';
+
 		const dateBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 
 		dateBack.addEventListener('click', function () {
@@ -1306,7 +1341,7 @@
 		});
 
 		dateActions.appendChild(dateBack);
-		dates.append(dateLabel, slots, dateActions);
+		dates.append(dateLabel, slotGrid, dateActions);
 
 		const details = screen(4, 'Your details');
 		details.innerHTML += `
@@ -1335,22 +1370,18 @@
 					<label>House or building</label>
 					<input type="text" name="address_line_1" autocomplete="address-line1" placeholder="23">
 				</div>
-
 				<div class="ebm-field-full">
 					<label>Street address</label>
 					<input type="text" name="address_line_2" autocomplete="address-line2" placeholder="Market Street">
 				</div>
-
 				<div>
 					<label>Town or city</label>
 					<input type="text" name="town" autocomplete="address-level2" placeholder="Blackpool">
 				</div>
-
 				<div>
 					<label>County</label>
 					<input type="text" name="county" autocomplete="address-level1" placeholder="Lancashire">
 				</div>
-
 				<div>
 					<label>Postcode</label>
 					<input type="text" name="postcode" autocomplete="postal-code" placeholder="FY1 1AA">
@@ -1368,11 +1399,8 @@
 			</div>
 		`;
 
-		const addressInputs = qsa('[name="address_line_1"], [name="address_line_2"], [name="town"], [name="county"], [name="postcode"]', details);
-
-		addressInputs.forEach(function (input) {
+		qsa('[name="address_line_1"], [name="address_line_2"], [name="town"], [name="county"], [name="postcode"]', details).forEach(function (input) {
 			input.addEventListener('input', function () {
-				state.addressSelectedFromGoogle = false;
 				updateAddressPreview(app);
 				clearAddressMessage(app);
 			});
@@ -1384,6 +1412,7 @@
 
 		const detailsActions = document.createElement('div');
 		detailsActions.className = 'ebm-actions';
+
 		const detailsBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const detailsNext = createButton('Continue', 'ebm-btn');
 
@@ -1395,12 +1424,12 @@
 			state.customer = getCustomer(app);
 
 			if (!state.customer.name || !state.customer.email || !state.customer.phone || !state.customer.postcode || !state.customer.line_1 || !state.customer.line_2 || !state.customer.town) {
-				setMessage(app, 'Please complete your contact details and service address before continuing.', 'error');
+				message(app, 'Please complete your contact details and service address before continuing.', 'error');
 				return;
 			}
 
 			if (!postcodeAllowed(state.customer.postcode)) {
-				setMessage(app, `Sorry, bookings are only available for ${allowedPostcodeLabel()} postcodes.`, 'error');
+				message(app, `Sorry, bookings are only available for ${allowedPostcodeLabel()} postcodes.`, 'error');
 				showAddressMessage(app, `Sorry, bookings are only available for ${allowedPostcodeLabel()} postcodes.`, 'error');
 				return;
 			}
@@ -1412,7 +1441,7 @@
 				renderReview(app, state);
 				goToStep(app, state, 5);
 			} catch (error) {
-				setMessage(app, error.message, 'error');
+				message(app, error.message, 'error');
 			}
 		});
 
@@ -1435,8 +1464,20 @@
 			<div class="ebm-voucher-message" data-ebm-voucher-message></div>
 		`;
 
+		qs('[data-ebm-apply-voucher]', voucherBox).addEventListener('click', function () {
+			applyVoucher(app, state);
+		});
+
+		qs('[data-ebm-voucher-input]', voucherBox).addEventListener('keydown', function (event) {
+			if (event.key === 'Enter') {
+				event.preventDefault();
+				applyVoucher(app, state);
+			}
+		});
+
 		const reviewActions = document.createElement('div');
 		reviewActions.className = 'ebm-actions';
+
 		const reviewBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const reviewSubmit = createButton('Confirm booking and pay deposit', 'ebm-btn');
 
@@ -1446,17 +1487,6 @@
 
 		reviewSubmit.addEventListener('click', function () {
 			submitBooking(app, state);
-		});
-
-		qs('[data-ebm-apply-voucher]', voucherBox).addEventListener('click', function () {
-			applyVoucher(app, state);
-		});
-
-		qs('[data-ebm-voucher-input]', voucherBox).addEventListener('keydown', function (event) {
-			if ('Enter' === event.key) {
-				event.preventDefault();
-				applyVoucher(app, state);
-			}
 		});
 
 		reviewActions.append(reviewBack, reviewSubmit);
@@ -1472,19 +1502,13 @@
 	}
 
 	function init() {
-		const apps = qsa('[data-ebm-booking-app], #ebm-booking-app, .ebm-booking-form');
-
-		if (!apps.length) {
-			return;
-		}
-
-		apps.forEach(function (app) {
+		qsa('[data-ebm-booking-app], #ebm-booking-app, .ebm-booking-form').forEach(function (app) {
 			if (app.dataset.ebmInitialised === '1') {
 				return;
 			}
 
 			app.dataset.ebmInitialised = '1';
-			buildFreshApp(app);
+			buildApp(app);
 		});
 	}
 

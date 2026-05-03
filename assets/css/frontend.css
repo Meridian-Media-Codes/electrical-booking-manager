@@ -24,6 +24,8 @@
 	padding: 0;
 	color: var(--ebm-text);
 	font-family: inherit;
+	position: relative;
+	z-index: 10;
 }
 
 .ebm-booking-form *,
@@ -40,6 +42,8 @@
 	box-shadow: var(--ebm-shadow);
 	padding: clamp(22px, 4vw, 42px);
 	overflow: visible;
+	position: relative;
+	z-index: 20;
 }
 
 .ebm-step-header {
@@ -52,6 +56,8 @@
 .ebm-step-pill {
 	width: 38px;
 	height: 38px;
+	min-width: 38px;
+	min-height: 38px;
 	border: 0;
 	border-radius: 999px;
 	display: inline-flex;
@@ -63,6 +69,8 @@
 	font-weight: 800;
 	line-height: 1;
 	padding: 0;
+	cursor: pointer;
+	box-shadow: none;
 }
 
 .ebm-step-pill.is-active,
@@ -136,6 +144,7 @@
 	text-align: left;
 	cursor: pointer;
 	transition: border-color 0.18s ease, background 0.18s ease, color 0.18s ease, transform 0.18s ease;
+	box-shadow: none;
 }
 
 .ebm-job-card {
@@ -224,6 +233,7 @@
 	line-height: 1.35;
 	outline: none;
 	transition: border-color 0.18s ease, box-shadow 0.18s ease;
+	box-shadow: none;
 }
 
 .ebm-booking-form textarea {
@@ -260,6 +270,7 @@
 
 .ebm-privacy-row input {
 	width: 16px;
+	min-width: 16px;
 	min-height: 16px;
 	height: 16px;
 	margin: 0;
@@ -290,6 +301,7 @@
 	text-decoration: none;
 	cursor: pointer;
 	transition: background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+	box-shadow: none;
 }
 
 .ebm-btn:hover {
@@ -307,14 +319,14 @@
 }
 
 .ebm-btn-secondary {
-	background: #ffffff;
-	color: var(--ebm-navy);
-	border: 1px solid var(--ebm-line-strong);
+	background: #ffffff !important;
+	color: var(--ebm-navy) !important;
+	border: 1px solid var(--ebm-line-strong) !important;
 }
 
 .ebm-btn-secondary:hover {
-	background: var(--ebm-soft);
-	color: var(--ebm-navy);
+	background: var(--ebm-soft) !important;
+	color: var(--ebm-navy) !important;
 	box-shadow: none;
 }
 
@@ -403,11 +415,13 @@
 .ebm-date-wrap {
 	position: relative;
 	margin-bottom: 18px;
-	z-index: 50;
+	z-index: 99999;
+	overflow: visible;
 }
 
 .ebm-date-input-wrap {
 	position: relative;
+	z-index: 2;
 }
 
 .ebm-date-input-wrap input {
@@ -420,6 +434,8 @@
 	right: 12px;
 	width: 40px;
 	height: 40px;
+	min-width: 40px;
+	min-height: 40px;
 	border: 0;
 	border-radius: 12px;
 	background: var(--ebm-slate);
@@ -430,6 +446,7 @@
 	transform: translateY(-50%);
 	cursor: pointer;
 	padding: 0;
+	box-shadow: none;
 }
 
 .ebm-date-trigger svg {
@@ -441,14 +458,17 @@
 	position: absolute;
 	top: calc(100% + 10px);
 	left: 0;
-	width: min(340px, 92vw);
+	width: 340px;
+	max-width: calc(100vw - 32px);
 	background: #ffffff;
 	border: 1px solid var(--ebm-line);
 	border-radius: 18px;
 	box-shadow: 0 18px 40px rgba(18, 32, 51, 0.16);
 	padding: 16px;
 	display: none;
-	z-index: 99999;
+	z-index: 9999999;
+	overflow: visible;
+	pointer-events: auto;
 }
 
 .ebm-calendar-popover.is-open {
@@ -475,8 +495,13 @@
 }
 
 .ebm-cal-nav button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	width: 38px;
 	height: 38px;
+	min-width: 38px;
+	min-height: 38px;
 	border: 1px solid var(--ebm-line);
 	border-radius: 12px;
 	background: #ffffff;
@@ -485,11 +510,17 @@
 	font-weight: 850;
 	line-height: 1;
 	cursor: pointer;
+	padding: 0;
+	margin: 0;
+	box-shadow: none;
+	text-decoration: none;
 }
 
 .ebm-cal-nav button:hover {
 	border-color: var(--ebm-orange);
 	color: var(--ebm-orange);
+	background: #ffffff;
+	box-shadow: none;
 }
 
 .ebm-cal-weekdays,
@@ -497,31 +528,60 @@
 	display: grid;
 	grid-template-columns: repeat(7, 1fr);
 	gap: 6px;
+	width: 100%;
+	position: relative;
+	z-index: 2;
+	pointer-events: auto;
 }
 
 .ebm-cal-weekdays span {
-	text-align: center;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	height: 28px;
+	padding: 0;
+	margin: 0;
 	font-size: 13px;
 	font-weight: 850;
+	line-height: 1;
+	text-align: center;
 	color: var(--ebm-muted);
-	padding: 6px 0;
 }
 
 .ebm-cal-day {
+	display: flex;
+	align-items: center;
+	justify-content: center;
 	width: 100%;
-	aspect-ratio: 1 / 1;
+	height: 38px;
+	min-width: 0;
+	min-height: 0;
+	max-width: none;
+	aspect-ratio: auto;
+	padding: 0;
+	margin: 0;
 	border: 0;
 	border-radius: 12px;
 	background: #ffffff;
 	color: var(--ebm-text);
 	font-size: 15px;
 	font-weight: 850;
+	line-height: 1;
+	text-align: center;
+	letter-spacing: 0;
+	box-shadow: none;
+	text-decoration: none;
+	transform: none;
 	cursor: pointer;
+	pointer-events: auto;
 }
 
 .ebm-cal-day:hover {
 	background: #fff7ed;
 	color: var(--ebm-orange-dark);
+	box-shadow: none;
+	transform: none;
 }
 
 .ebm-cal-day.is-muted {
@@ -535,6 +595,54 @@
 .ebm-cal-day.is-selected {
 	background: var(--ebm-orange);
 	color: #ffffff;
+}
+
+/* Calendar unavailable days */
+.ebm-calendar-popover.is-checking-availability::after {
+	content: "Checking dates...";
+	position: absolute;
+	left: 16px;
+	right: 16px;
+	bottom: 12px;
+	padding: 8px 10px;
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.94);
+	border: 1px solid #d8e0ea;
+	color: #5f6f82;
+	font-size: 13px;
+	font-weight: 800;
+	text-align: center;
+	box-shadow: 0 8px 18px rgba(18, 32, 51, 0.08);
+	z-index: 5;
+}
+
+.ebm-cal-day.is-unavailable {
+	background: #f1f4f8 !important;
+	color: #b0bac8 !important;
+	cursor: not-allowed !important;
+	opacity: 0.72 !important;
+	box-shadow: none !important;
+	text-decoration: none !important;
+}
+
+.ebm-cal-day.is-unavailable:hover {
+	background: #f1f4f8 !important;
+	color: #b0bac8 !important;
+	transform: none !important;
+	box-shadow: none !important;
+}
+
+.ebm-cal-day.is-unavailable.is-today {
+	box-shadow: inset 0 0 0 2px #d4dce6 !important;
+}
+
+.ebm-cal-day.is-unavailable.is-selected {
+	background: #f1f4f8 !important;
+	color: #b0bac8 !important;
+}
+
+.ebm-cal-day:disabled {
+	pointer-events: auto;
 }
 
 /* Voucher */
@@ -566,6 +674,14 @@
 
 .ebm-voucher-message:empty {
 	display: none;
+}
+
+.ebm-voucher-message.ebm-error {
+	color: var(--ebm-error);
+}
+
+.ebm-voucher-message.ebm-success {
+	color: var(--ebm-success);
 }
 
 /* Address lookup */
@@ -663,199 +779,34 @@
 	line-height: 1.45;
 }
 
-/* Hide legacy pac dropdown if Google injects one from cached scripts */
+/* Google address autocomplete dropdown fallback */
+
 .pac-container {
+	z-index: 999999 !important;
+	border-radius: 14px !important;
+	border: 1px solid #d8e0ea !important;
+	box-shadow: 0 18px 40px rgba(18, 32, 51, 0.16) !important;
+	font-family: inherit !important;
+}
+
+.pac-icon {
 	display: none !important;
 }
 
-/* Mobile */
-
-@media (max-width: 860px) {
-	.ebm-details-grid {
-		grid-template-columns: 1fr 1fr;
-	}
-
-	.ebm-slot-grid {
-		grid-template-columns: repeat(3, minmax(0, 1fr));
-	}
+.pac-item {
+	padding: 11px 14px !important;
+	font-size: 14px !important;
+	line-height: 1.45 !important;
+	cursor: pointer !important;
 }
 
-@media (max-width: 640px) {
-	.ebm-booking-form {
-		padding: 0 8px;
-	}
-
-	.ebm-booking-shell {
-		border-radius: 18px;
-		padding: 20px;
-	}
-
-	.ebm-step-header {
-		gap: 8px;
-		margin-bottom: 20px;
-	}
-
-	.ebm-step-pill {
-		width: 34px;
-		height: 34px;
-		font-size: 15px;
-	}
-
-	.ebm-booking-form h2 {
-		font-size: 32px;
-	}
-
-	.ebm-details-grid,
-	.ebm-addon-inner,
-	.ebm-voucher-row {
-		grid-template-columns: 1fr;
-	}
-
-	.ebm-slot-grid {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
-
-	.ebm-actions {
-		flex-direction: column-reverse;
-		align-items: stretch;
-	}
-
-	.ebm-btn,
-	.ebm-actions .ebm-btn {
-		width: 100%;
-	}
-
-	.ebm-calendar-popover {
-		position: fixed;
-		left: 16px;
-		right: 16px;
-		top: 50%;
-		transform: translateY(-50%);
-		width: auto;
-		max-height: calc(100vh - 32px);
-		overflow: auto;
-	}
-
-	.ebm-summary-row {
-		align-items: flex-start;
-		flex-direction: column;
-		gap: 4px;
-	}
-
-	.ebm-total-row {
-		font-size: 22px;
-	}
-}
-
-
-/* Hard reset for EBM custom calendar buttons */
-.ebm-booking-form .ebm-calendar-popover {
-	width: 340px !important;
-	max-width: calc(100vw - 32px) !important;
-	padding: 16px !important;
-	overflow: visible !important;
-}
-
-.ebm-booking-form .ebm-cal-weekdays,
-.ebm-booking-form .ebm-cal-days {
-	display: grid !important;
-	grid-template-columns: repeat(7, 1fr) !important;
-	gap: 6px !important;
-	width: 100% !important;
-}
-
-.ebm-booking-form .ebm-cal-weekdays span {
-	display: flex !important;
-	align-items: center !important;
-	justify-content: center !important;
-	width: 100% !important;
-	height: 28px !important;
-	padding: 0 !important;
-	margin: 0 !important;
-	font-size: 13px !important;
+.pac-item-query {
 	font-weight: 850 !important;
-	line-height: 1 !important;
-	text-align: center !important;
-	color: var(--ebm-muted) !important;
+	color: #172234 !important;
 }
 
-.ebm-booking-form .ebm-cal-day {
-	display: flex !important;
-	align-items: center !important;
-	justify-content: center !important;
-	width: 100% !important;
-	height: 38px !important;
-	min-width: 0 !important;
-	min-height: 0 !important;
-	max-width: none !important;
-	aspect-ratio: auto !important;
-	padding: 0 !important;
-	margin: 0 !important;
-	border: 0 !important;
-	border-radius: 12px !important;
-	background: #ffffff !important;
-	color: var(--ebm-text) !important;
-	font-size: 15px !important;
-	font-weight: 850 !important;
-	line-height: 1 !important;
-	text-align: center !important;
-	letter-spacing: 0 !important;
-	box-shadow: none !important;
-	text-decoration: none !important;
-	transform: none !important;
-}
+/* Success screen */
 
-.ebm-booking-form .ebm-cal-day:hover {
-	background: #fff7ed !important;
-	color: var(--ebm-orange-dark) !important;
-	box-shadow: none !important;
-	transform: none !important;
-}
-
-.ebm-booking-form .ebm-cal-day.is-muted {
-	color: #a1adbd !important;
-}
-
-.ebm-booking-form .ebm-cal-day.is-today {
-	box-shadow: inset 0 0 0 2px var(--ebm-line-strong) !important;
-}
-
-.ebm-booking-form .ebm-cal-day.is-selected {
-	background: var(--ebm-orange) !important;
-	color: #ffffff !important;
-}
-
-.ebm-booking-form .ebm-cal-nav button {
-	display: flex !important;
-	align-items: center !important;
-	justify-content: center !important;
-	width: 38px !important;
-	height: 38px !important;
-	min-width: 0 !important;
-	min-height: 0 !important;
-	padding: 0 !important;
-	margin: 0 !important;
-	border: 1px solid var(--ebm-line) !important;
-	border-radius: 12px !important;
-	background: #ffffff !important;
-	color: var(--ebm-navy) !important;
-	font-size: 22px !important;
-	font-weight: 850 !important;
-	line-height: 1 !important;
-	box-shadow: none !important;
-	text-decoration: none !important;
-}
-
-@media (max-width: 640px) {
-	.ebm-booking-form .ebm-calendar-popover {
-		width: auto !important;
-		left: 16px !important;
-		right: 16px !important;
-		max-width: none !important;
-	}
-}
-
-/* Booking success screen */
 .ebm-booking-form.ebm-has-success {
 	max-width: 920px;
 }
@@ -1031,7 +982,107 @@
 	margin-top: 0;
 }
 
-@media (max-width: 767px) {
+/* Stacking fix for page builders and footers */
+
+.ebm-booking-form,
+.ebm-booking-form .ebm-booking-shell,
+.ebm-booking-form .ebm-step-screen.is-active,
+.ebm-booking-form .ebm-date-wrap {
+	position: relative !important;
+	overflow: visible !important;
+}
+
+body:has(.ebm-calendar-popover.is-open) .ebm-booking-form {
+	z-index: 999999 !important;
+}
+
+body:has(.ebm-calendar-popover.is-open) .site-footer,
+body:has(.ebm-calendar-popover.is-open) footer,
+body:has(.ebm-calendar-popover.is-open) .wp-site-blocks > footer {
+	position: relative;
+	z-index: 1;
+}
+
+/* Mobile */
+
+@media (max-width: 860px) {
+	.ebm-details-grid {
+		grid-template-columns: 1fr 1fr;
+	}
+
+	.ebm-slot-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+}
+
+@media (max-width: 640px) {
+	.ebm-booking-form {
+		padding: 0 8px;
+	}
+
+	.ebm-booking-shell {
+		border-radius: 18px;
+		padding: 20px;
+	}
+
+	.ebm-step-header {
+		gap: 8px;
+		margin-bottom: 20px;
+	}
+
+	.ebm-step-pill {
+		width: 34px;
+		height: 34px;
+		min-width: 34px;
+		min-height: 34px;
+		font-size: 15px;
+	}
+
+	.ebm-booking-form h2 {
+		font-size: 32px;
+	}
+
+	.ebm-details-grid,
+	.ebm-addon-inner,
+	.ebm-voucher-row {
+		grid-template-columns: 1fr;
+	}
+
+	.ebm-slot-grid {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.ebm-actions {
+		flex-direction: column-reverse;
+		align-items: stretch;
+	}
+
+	.ebm-btn,
+	.ebm-actions .ebm-btn {
+		width: 100%;
+	}
+
+	.ebm-calendar-popover {
+		position: absolute;
+		left: 0;
+		top: calc(100% + 10px);
+		width: min(340px, calc(100vw - 56px));
+		max-width: calc(100vw - 56px);
+		transform: none;
+		max-height: none;
+		overflow: visible;
+	}
+
+	.ebm-summary-row {
+		align-items: flex-start;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.ebm-total-row {
+		font-size: 22px;
+	}
+
 	.ebm-success-screen {
 		padding-top: 8px;
 	}
@@ -1067,52 +1118,4 @@
 		align-items: flex-start;
 		gap: 4px;
 	}
-}
-
-/* Fix front-end date picker stacking over the page/footer */
-.ebm-booking-form,
-.ebm-booking-form .ebm-booking-shell,
-.ebm-booking-form .ebm-step-screen.is-active,
-.ebm-booking-form .ebm-date-wrap {
-	position: relative !important;
-	z-index: 99999 !important;
-	overflow: visible !important;
-}
-
-.ebm-booking-form .ebm-calendar-popover {
-	position: absolute !important;
-	z-index: 9999999 !important;
-	pointer-events: auto !important;
-	background: #ffffff !important;
-}
-
-.ebm-booking-form .ebm-cal-days,
-.ebm-booking-form .ebm-cal-weekdays {
-	position: relative !important;
-	z-index: 9999999 !important;
-	pointer-events: auto !important;
-}
-
-.ebm-booking-form .ebm-cal-day,
-.ebm-booking-form .ebm-cal-nav button,
-.ebm-booking-form .ebm-date-trigger {
-	pointer-events: auto !important;
-	cursor: pointer !important;
-}
-
-/* Keep the date picker above nearby footer/content sections */
-body:has(.ebm-calendar-popover.is-open) .site-footer,
-body:has(.ebm-calendar-popover.is-open) footer,
-body:has(.ebm-calendar-popover.is-open) .wp-site-blocks > footer {
-	position: relative;
-	z-index: 1;
-}
-
-body:has(.ebm-calendar-popover.is-open) .ebm-booking-form {
-	z-index: 999999 !important;
-}
-
-/* Fallback for browsers without :has support */
-.ebm-calendar-popover.is-open {
-	isolation: isolate !important;
 }
