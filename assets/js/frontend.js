@@ -79,20 +79,6 @@
 		return `${parts[2]}-${parts[1]}-${parts[0]}`;
 	}
 
-	function isoToUk(value) {
-		if (!value) {
-			return '';
-		}
-
-		const parts = String(value).split('-');
-
-		if (parts.length !== 3) {
-			return value;
-		}
-
-		return `${parts[2]}/${parts[1]}/${parts[0]}`;
-	}
-
 	function monthKey(date) {
 		return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`;
 	}
@@ -373,6 +359,7 @@
 
 				clearMessage(app);
 				await loadAddons(app, state);
+				preloadInitialAvailability(state);
 				goToStep(app, state, 2);
 			});
 
@@ -496,6 +483,8 @@
 				cache.months = {};
 				cache.slots = {};
 				cache.quotes = {};
+
+				preloadInitialAvailability(state);
 			});
 
 			target.appendChild(card);
@@ -581,8 +570,35 @@
 		});
 	}
 
+	function setCalendarCheckingState(popover, isChecking) {
+		if (!popover) {
+			return;
+		}
+
+		popover.classList.toggle('is-checking-availability', isChecking);
+		popover.classList.toggle('is-awaiting-availability', isChecking);
+		popover.classList.remove('is-availability-error');
+
+		qsa('.ebm-cal-day', popover).forEach(function (button) {
+			if (isChecking) {
+				button.disabled = true;
+				button.classList.add('is-pending-availability');
+				button.setAttribute('aria-disabled', 'true');
+				button.setAttribute('title', 'Checking dates');
+			}
+		});
+	}
+
 	function applyMonthAvailability(popover, unavailableDates) {
 		const unavailable = Array.isArray(unavailableDates) ? unavailableDates : [];
+
+		if (!popover) {
+			return;
+		}
+
+		popover.classList.remove('is-checking-availability');
+		popover.classList.remove('is-awaiting-availability');
+		popover.classList.remove('is-availability-error');
 
 		qsa('.ebm-cal-day', popover).forEach(function (button) {
 			const date = button.dataset.date || '';
@@ -590,6 +606,8 @@
 			if (!date) {
 				return;
 			}
+
+			button.classList.remove('is-pending-availability');
 
 			if (unavailable.includes(date)) {
 				button.classList.add('is-unavailable');
@@ -605,6 +623,52 @@
 		});
 	}
 
+	function setCalendarAvailabilityError(popover) {
+		if (!popover) {
+			return;
+		}
+
+		popover.classList.remove('is-checking-availability');
+		popover.classList.remove('is-awaiting-availability');
+		popover.classList.add('is-availability-error');
+
+		qsa('.ebm-cal-day', popover).forEach(function (button) {
+			button.disabled = true;
+			button.classList.add('is-pending-availability');
+			button.setAttribute('aria-disabled', 'true');
+			button.setAttribute('title', 'Dates could not be checked');
+		});
+	}
+
+	async function fetchMonthAvailability(state, monthDate) {
+		if (!state.jobId || !monthDate) {
+			return null;
+		}
+
+		const key = cacheKey('month', {
+			job_id: state.jobId,
+			month: monthKey(monthDate),
+			addons: state.addons,
+		});
+
+		if (cache.months[key]) {
+			return cache.months[key];
+		}
+
+		const response = await api('month-availability', {
+			method: 'POST',
+			body: JSON.stringify({
+				job_id: state.jobId,
+				month: monthKey(monthDate),
+				addons: state.addons,
+			}),
+		});
+
+		cache.months[key] = response;
+
+		return response;
+	}
+
 	async function loadMonthAvailability(app, state, monthDate, popover) {
 		if (!state.jobId || !monthDate || !popover) {
 			return;
@@ -618,28 +682,44 @@
 
 		if (cache.months[key]) {
 			applyMonthAvailability(popover, cache.months[key].unavailable_dates || []);
+			preloadNextMonth(state, monthDate);
 			return;
 		}
 
-		popover.classList.add('is-checking-availability');
+		setCalendarCheckingState(popover, true);
 
 		try {
-			const response = await api('month-availability', {
-				method: 'POST',
-				body: JSON.stringify({
-					job_id: state.jobId,
-					month: monthKey(monthDate),
-					addons: state.addons,
-				}),
-			});
-
-			cache.months[key] = response;
+			const response = await fetchMonthAvailability(state, monthDate);
 			applyMonthAvailability(popover, response.unavailable_dates || []);
+			preloadNextMonth(state, monthDate);
 		} catch (error) {
-			/* Day-level slot checks still protect the flow if this endpoint fails. */
-		} finally {
-			popover.classList.remove('is-checking-availability');
+			setCalendarAvailabilityError(popover);
 		}
+	}
+
+	function preloadInitialAvailability(state) {
+		if (!state.jobId) {
+			return;
+		}
+
+		const current = new Date();
+		const currentMonth = new Date(current.getFullYear(), current.getMonth(), 1);
+
+		fetchMonthAvailability(state, currentMonth)
+			.then(function () {
+				preloadNextMonth(state, currentMonth);
+			})
+			.catch(function () {});
+	}
+
+	function preloadNextMonth(state, monthDate) {
+		if (!state.jobId || !monthDate) {
+			return;
+		}
+
+		const next = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 1);
+
+		fetchMonthAvailability(state, next).catch(function () {});
 	}
 
 	async function loadQuote(state, bypassCache) {
@@ -1187,9 +1267,12 @@
 
 				const button = document.createElement('button');
 				button.type = 'button';
-				button.className = 'ebm-cal-day';
+				button.className = 'ebm-cal-day is-pending-availability';
 				button.textContent = String(date.getDate());
 				button.dataset.date = isoFromDate(date);
+				button.disabled = true;
+				button.setAttribute('aria-disabled', 'true');
+				button.setAttribute('title', 'Checking dates');
 
 				if (date.getMonth() !== monthIndex) {
 					button.classList.add('is-muted');
@@ -1207,7 +1290,7 @@
 					event.preventDefault();
 					event.stopPropagation();
 
-					if (button.disabled || button.classList.contains('is-unavailable')) {
+					if (button.disabled || button.classList.contains('is-unavailable') || button.classList.contains('is-pending-availability')) {
 						return;
 					}
 
