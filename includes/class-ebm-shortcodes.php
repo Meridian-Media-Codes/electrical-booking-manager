@@ -10,7 +10,7 @@ final class EBM_Shortcodes {
 	}
 
 	private static function frontend_asset_version( $relative_path ) {
-		$path = plugin_dir_path( __FILE__ ) . '../' . ltrim( $relative_path, '/' );
+		$path = EBM_DIR . ltrim( $relative_path, '/' );
 
 		if ( file_exists( $path ) ) {
 			return (string) filemtime( $path );
@@ -55,16 +55,22 @@ final class EBM_Shortcodes {
 	}
 
 	private static function enqueue_frontend_assets() {
+		$settings        = EBM_Settings::all();
+		$places_api_key  = sanitize_text_field( $settings['google_places_api_key'] ?? '' );
+		$allowed_prefixes = class_exists( 'EBM_Settings' ) && method_exists( 'EBM_Settings', 'allowed_postcode_prefixes' )
+			? EBM_Settings::allowed_postcode_prefixes()
+			: array( 'FY' );
+
 		wp_enqueue_style(
 			'ebm-frontend',
-			plugins_url( '../assets/css/frontend.css', __FILE__ ),
+			EBM_URL . 'assets/css/frontend.css',
 			array(),
 			self::frontend_asset_version( 'assets/css/frontend.css' )
 		);
 
 		wp_enqueue_script(
 			'ebm-frontend',
-			plugins_url( '../assets/js/frontend.js', __FILE__ ),
+			EBM_URL . 'assets/js/frontend.js',
 			array(),
 			self::frontend_asset_version( 'assets/js/frontend.js' ),
 			true
@@ -74,12 +80,32 @@ final class EBM_Shortcodes {
 			'ebm-frontend',
 			'ebmBooking',
 			array(
-				'restUrl'       => esc_url_raw( rest_url( 'ebm/v1/' ) ),
-				'nonce'         => wp_create_nonce( 'wp_rest' ),
-				'preloadedJobs' => self::preload_jobs(),
-				'cacheVersion'  => self::frontend_asset_version( 'assets/js/frontend.js' ),
+				'restUrl'                 => esc_url_raw( rest_url( 'ebm/v1/' ) ),
+				'nonce'                   => wp_create_nonce( 'wp_rest' ),
+				'preloadedJobs'           => self::preload_jobs(),
+				'cacheVersion'            => self::frontend_asset_version( 'assets/js/frontend.js' ),
+				'googlePlacesApiKey'      => $places_api_key,
+				'allowedPostcodePrefixes' => $allowed_prefixes,
 			)
 		);
+
+		if ( '' !== $places_api_key ) {
+			wp_enqueue_script(
+				'ebm-google-places',
+				add_query_arg(
+					array(
+						'key'       => $places_api_key,
+						'libraries' => 'places',
+						'callback'  => 'ebmGooglePlacesLoaded',
+						'loading'   => 'async',
+					),
+					'https://maps.googleapis.com/maps/api/js'
+				),
+				array( 'ebm-frontend' ),
+				null,
+				true
+			);
+		}
 	}
 
 	public static function booking_form() {

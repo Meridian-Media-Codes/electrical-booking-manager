@@ -80,6 +80,41 @@ final class EBM_REST {
 		return (bool) wp_verify_nonce( $request->get_header( 'X-WP-Nonce' ), 'wp_rest' );
 	}
 
+	private static function normalise_uk_postcode( $postcode ) {
+		$postcode = strtoupper( sanitize_text_field( wp_unslash( $postcode ) ) );
+		$postcode = preg_replace( '/\s+/', '', $postcode );
+
+		if ( strlen( $postcode ) < 5 || strlen( $postcode ) > 7 ) {
+			return '';
+		}
+
+		return substr( $postcode, 0, -3 ) . ' ' . substr( $postcode, -3 );
+	}
+
+	private static function postcode_allowed( $postcode ) {
+		$postcode = self::normalise_uk_postcode( $postcode );
+
+		if ( '' === $postcode ) {
+			return false;
+		}
+
+		$compact = preg_replace( '/\s+/', '', strtoupper( $postcode ) );
+
+		$prefixes = class_exists( 'EBM_Settings' ) && method_exists( 'EBM_Settings', 'allowed_postcode_prefixes' )
+			? EBM_Settings::allowed_postcode_prefixes()
+			: array( 'FY' );
+
+		foreach ( $prefixes as $prefix ) {
+			$prefix = strtoupper( preg_replace( '/[^A-Z0-9]/', '', $prefix ) );
+
+			if ( '' !== $prefix && 0 === strpos( $compact, $prefix ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
 	public static function jobs() {
 		global $wpdb;
 
@@ -248,10 +283,26 @@ final class EBM_REST {
 
 		$customer = (array) $request->get_param( 'customer' );
 
-		$name    = sanitize_text_field( $customer['name'] ?? '' );
-		$email   = sanitize_email( $customer['email'] ?? '' );
-		$phone   = sanitize_text_field( $customer['phone'] ?? '' );
-		$address = sanitize_textarea_field( $customer['address'] ?? '' );
+		$name     = sanitize_text_field( $customer['name'] ?? '' );
+		$email    = sanitize_email( $customer['email'] ?? '' );
+		$phone    = sanitize_text_field( $customer['phone'] ?? '' );
+		$postcode = self::normalise_uk_postcode( $customer['postcode'] ?? '' );
+		$line_1   = sanitize_text_field( $customer['line_1'] ?? '' );
+		$line_2   = sanitize_text_field( $customer['line_2'] ?? '' );
+		$town     = sanitize_text_field( $customer['town'] ?? '' );
+		$county   = sanitize_text_field( $customer['county'] ?? '' );
+
+		$address_parts = array_filter(
+			array(
+				$line_1,
+				$line_2,
+				$town,
+				$county,
+				$postcode,
+			)
+		);
+
+		$address = implode( "\n", $address_parts );
 
 		$privacy = false;
 
@@ -261,12 +312,21 @@ final class EBM_REST {
 			$privacy = (bool) $request->get_param( 'privacy' );
 		}
 
-		if ( ! $privacy || ! $name || ! is_email( $email ) || ! $phone || ! $address ) {
+		if ( ! $privacy || ! $name || ! is_email( $email ) || ! $phone || ! $address || ! $postcode ) {
 			return new WP_REST_Response(
 				array(
 					'message' => __( 'Please complete your details and accept the privacy notice.', 'electrical-booking-manager' ),
 				),
 				400
+			);
+		}
+
+		if ( ! self::postcode_allowed( $postcode ) ) {
+			return new WP_REST_Response(
+				array(
+					'message' => __( 'Sorry, bookings are only available for FY postcodes.', 'electrical-booking-manager' ),
+				),
+				403
 			);
 		}
 
@@ -356,10 +416,8 @@ final class EBM_REST {
 			$customer_id = (int) $wpdb->insert_id;
 		}
 
-		$bookings_table = EBM_Helpers::table( 'bookings' );
-
 		$wpdb->insert(
-			$bookings_table,
+			EBM_Helpers::table( 'bookings' ),
 			array(
 				'public_token'       => EBM_Helpers::token(),
 				'job_id'             => $job_id,
@@ -423,12 +481,6 @@ final class EBM_REST {
 			);
 		}
 
-		/*
-		 * Important payment lifecycle:
-		 * Paid bookings stay local as pending_payment.
-		 * They are not written to Google until Stripe confirms payment.
-		 * Free bookings are confirmed immediately and can be written to Google now.
-		 */
 		if ( $deposit <= 0 ) {
 			if ( $discount_id && class_exists( 'EBM_Discounts' ) ) {
 				EBM_Discounts::increment_usage( $discount_id );
@@ -439,17 +491,17 @@ final class EBM_REST {
 			}
 
 			return array(
-				'booking_id'        => $booking_id,
-				'checkout_url'      => '',
-				'payment_required'  => false,
-				'message'           => __( 'Booking confirmed. No payment is due.', 'electrical-booking-manager' ),
-				'voucher_code'      => $voucher_code,
-				'discount_id'       => $discount_id,
-				'discount_amount'   => round( $discount_amount, 2 ),
-				'original_total'    => round( $original_total, 2 ),
-				'total'             => round( $total, 2 ),
-				'deposit'           => round( $deposit, 2 ),
-				'balance'           => round( $balance, 2 ),
+				'booking_id'       => $booking_id,
+				'checkout_url'     => '',
+				'payment_required' => false,
+				'message'          => __( 'Booking confirmed. No payment is due.', 'electrical-booking-manager' ),
+				'voucher_code'     => $voucher_code,
+				'discount_id'      => $discount_id,
+				'discount_amount'  => round( $discount_amount, 2 ),
+				'original_total'   => round( $original_total, 2 ),
+				'total'            => round( $total, 2 ),
+				'deposit'          => round( $deposit, 2 ),
+				'balance'          => round( $balance, 2 ),
 			);
 		}
 

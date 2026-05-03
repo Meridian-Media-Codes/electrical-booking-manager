@@ -8,6 +8,18 @@
 		quotes: {},
 	};
 
+	const appStates = new WeakMap();
+
+	window.ebmGooglePlacesLoaded = function () {
+		document.querySelectorAll('[data-ebm-booking-app], #ebm-booking-app, .ebm-booking-form').forEach(function (app) {
+			const state = appStates.get(app);
+
+			if (state) {
+				initAddressAutocomplete(app, state);
+			}
+		});
+	};
+
 	function createInitialState() {
 		return {
 			step: 1,
@@ -20,6 +32,8 @@
 			quote: null,
 			voucherCode: '',
 			calendarMonth: null,
+			addressAutocompleteReady: false,
+			addressSelectedFromGoogle: false,
 		};
 	}
 
@@ -73,6 +87,8 @@
 			nonce: config.nonce || '',
 			preloadedJobs: Array.isArray(config.preloadedJobs) ? config.preloadedJobs : [],
 			cacheVersion: config.cacheVersion || '1',
+			googlePlacesApiKey: config.googlePlacesApiKey || '',
+			allowedPostcodePrefixes: Array.isArray(config.allowedPostcodePrefixes) && config.allowedPostcodePrefixes.length ? config.allowedPostcodePrefixes : ['FY'],
 		};
 	}
 
@@ -151,11 +167,13 @@
 			pill.className = 'ebm-step-pill';
 			pill.textContent = String(i);
 			pill.dataset.step = String(i);
+
 			pill.addEventListener('click', function () {
 				if (canMoveToStep(state, i)) {
 					goToStep(app, state, i);
 				}
 			});
+
 			header.appendChild(pill);
 		}
 
@@ -239,6 +257,24 @@
 		}
 
 		return `${total} Minutes`;
+	}
+
+	function normalisePostcode(postcode) {
+		return String(postcode || '').toUpperCase().replace(/\s+/g, '');
+	}
+
+	function postcodeAllowed(postcode) {
+		const compact = normalisePostcode(postcode);
+		const config = getConfig();
+
+		return config.allowedPostcodePrefixes.some(function (prefix) {
+			const cleanPrefix = String(prefix || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+			return cleanPrefix && compact.startsWith(cleanPrefix);
+		});
+	}
+
+	function allowedPostcodeLabel() {
+		return getConfig().allowedPostcodePrefixes.join(', ');
 	}
 
 	function renderJobs(app, state, target, list) {
@@ -606,6 +642,160 @@
 		}
 	}
 
+	function extractPlaceComponent(place, type) {
+		const components = place && Array.isArray(place.address_components) ? place.address_components : [];
+
+		const match = components.find(function (component) {
+			return Array.isArray(component.types) && component.types.includes(type);
+		});
+
+		return match ? match.long_name : '';
+	}
+
+	function extractPlaceComponentShort(place, type) {
+		const components = place && Array.isArray(place.address_components) ? place.address_components : [];
+
+		const match = components.find(function (component) {
+			return Array.isArray(component.types) && component.types.includes(type);
+		});
+
+		return match ? match.short_name : '';
+	}
+
+	function showAddressMessage(app, message, type) {
+		const box = qs('[data-ebm-address-message]', app);
+
+		if (!box) {
+			return;
+		}
+
+		box.className = `ebm-address-message ebm-${type || 'error'}`;
+		box.textContent = message;
+	}
+
+	function clearAddressMessage(app) {
+		const box = qs('[data-ebm-address-message]', app);
+
+		if (box) {
+			box.className = 'ebm-address-message';
+			box.textContent = '';
+		}
+	}
+
+	function updateAddressPreview(root) {
+		const line1 = valueOf(root, '[name="address_line_1"]');
+		const line2 = valueOf(root, '[name="address_line_2"]');
+		const town = valueOf(root, '[name="town"]');
+		const county = valueOf(root, '[name="county"]');
+		const postcode = valueOf(root, '[name="postcode"]');
+
+		const parts = [line1, line2, town, county, postcode].filter(Boolean);
+		const preview = qs('[data-ebm-address-preview]', root);
+
+		if (!preview) {
+			return;
+		}
+
+		if (!parts.length) {
+			preview.innerHTML = '<strong>Service address preview</strong><span>Start typing your address above, or enter it manually.</span>';
+			return;
+		}
+
+		preview.innerHTML = `<strong>Service address preview</strong><span>${escapeHtml(parts.join(', '))}</span>`;
+	}
+
+	function fillAddressFromPlace(app, state, place) {
+		const streetNumber = extractPlaceComponent(place, 'street_number');
+		const route = extractPlaceComponent(place, 'route');
+		const premise = extractPlaceComponent(place, 'premise');
+		const subpremise = extractPlaceComponent(place, 'subpremise');
+		const postalTown = extractPlaceComponent(place, 'postal_town');
+		const locality = extractPlaceComponent(place, 'locality');
+		const county = extractPlaceComponent(place, 'administrative_area_level_2') || extractPlaceComponent(place, 'administrative_area_level_1');
+		const postcode = extractPlaceComponentShort(place, 'postal_code') || extractPlaceComponent(place, 'postal_code');
+
+		const line1Value = [subpremise, premise || streetNumber].filter(Boolean).join(', ');
+		const townValue = postalTown || locality;
+
+		const line1 = qs('[name="address_line_1"]', app);
+		const line2 = qs('[name="address_line_2"]', app);
+		const town = qs('[name="town"]', app);
+		const countyInput = qs('[name="county"]', app);
+		const postcodeInput = qs('[name="postcode"]', app);
+
+		if (line1) {
+			line1.value = line1Value || streetNumber || premise || '';
+		}
+
+		if (line2) {
+			line2.value = route || '';
+		}
+
+		if (town) {
+			town.value = townValue || '';
+		}
+
+		if (countyInput) {
+			countyInput.value = county || '';
+		}
+
+		if (postcodeInput) {
+			postcodeInput.value = postcode || '';
+		}
+
+		state.addressSelectedFromGoogle = true;
+		updateAddressPreview(app);
+
+		if (!postcode) {
+			showAddressMessage(app, 'Please enter the postcode for this address.', 'error');
+			return;
+		}
+
+		if (!postcodeAllowed(postcode)) {
+			showAddressMessage(app, `Sorry, we only accept bookings for ${allowedPostcodeLabel()} postcodes.`, 'error');
+			return;
+		}
+
+		showAddressMessage(app, 'Address accepted. Please check the details before continuing.', 'success');
+	}
+
+	function initAddressAutocomplete(app, state) {
+		if (state.addressAutocompleteReady) {
+			return;
+		}
+
+		const input = qs('[data-ebm-address-search]', app);
+
+		if (!input) {
+			return;
+		}
+
+		if (!window.google || !window.google.maps || !window.google.maps.places) {
+			return;
+		}
+
+		state.addressAutocompleteReady = true;
+
+		const autocomplete = new window.google.maps.places.Autocomplete(input, {
+			componentRestrictions: {
+				country: 'gb',
+			},
+			fields: ['address_components', 'formatted_address', 'geometry', 'name'],
+			types: ['address'],
+		});
+
+		autocomplete.addListener('place_changed', function () {
+			const place = autocomplete.getPlace();
+
+			if (!place || !place.address_components) {
+				showAddressMessage(app, 'Please choose an address from the list.', 'error');
+				return;
+			}
+
+			fillAddressFromPlace(app, state, place);
+		});
+	}
+
 	async function submitBooking(app, state) {
 		clearMessage(app);
 
@@ -630,23 +820,31 @@
 				return;
 			}
 
-			if (response && response.url) {
-				window.location.href = response.url;
-				return;
-			}
-
-			setMessage(app, 'Booking created successfully.', 'success');
+			setMessage(app, response.message || 'Booking created successfully.', 'success');
 		} catch (error) {
 			setMessage(app, error.message, 'error');
 		}
 	}
 
 	function getCustomer(app) {
+		const line1 = valueOf(app, '[name="address_line_1"]');
+		const line2 = valueOf(app, '[name="address_line_2"]');
+		const town = valueOf(app, '[name="town"]');
+		const county = valueOf(app, '[name="county"]');
+		const postcode = valueOf(app, '[name="postcode"]');
+
+		const addressParts = [line1, line2, town, county, postcode].filter(Boolean);
+
 		return {
 			name: valueOf(app, '[name="name"]'),
 			email: valueOf(app, '[name="email"]'),
 			phone: valueOf(app, '[name="phone"]'),
-			address: valueOf(app, '[name="address"]'),
+			postcode: postcode,
+			line_1: line1,
+			line_2: line2,
+			town: town,
+			county: county,
+			address: addressParts.join('\n'),
 			privacy: !!qs('[name="privacy"]', app)?.checked,
 		};
 	}
@@ -849,6 +1047,7 @@
 
 	function buildFreshApp(app) {
 		const state = createInitialState();
+		appStates.set(app, state);
 
 		app.innerHTML = '';
 
@@ -921,16 +1120,64 @@
 					<label>Phone</label>
 					<input type="tel" name="phone" autocomplete="tel">
 				</div>
+
+				<div class="ebm-field-full ebm-address-helper">
+					<label>Address search</label>
+					<input type="text" name="address_search" data-ebm-address-search placeholder="Start typing the service address">
+					<div class="ebm-address-message" data-ebm-address-message></div>
+					<p class="ebm-address-hint">Choose an address from the list. We only accept bookings for ${escapeHtml(allowedPostcodeLabel())} postcodes.</p>
+				</div>
+
+				<div>
+					<label>House or building</label>
+					<input type="text" name="address_line_1" autocomplete="address-line1" placeholder="23">
+				</div>
+
 				<div class="ebm-field-full">
-					<label>Service address</label>
-					<textarea name="address" autocomplete="street-address"></textarea>
+					<label>Street address</label>
+					<input type="text" name="address_line_2" autocomplete="address-line2" placeholder="Market Street">
+				</div>
+
+				<div>
+					<label>Town or city</label>
+					<input type="text" name="town" autocomplete="address-level2" placeholder="Blackpool">
+				</div>
+
+				<div>
+					<label>County</label>
+					<input type="text" name="county" autocomplete="address-level1" placeholder="Lancashire">
+				</div>
+
+				<div>
+					<label>Postcode</label>
+					<input type="text" name="postcode" autocomplete="postal-code" placeholder="FY1 1AA">
 				</div>
 			</div>
+
+			<div class="ebm-address-preview" data-ebm-address-preview>
+				<strong>Service address preview</strong>
+				<span>Start typing your address above, or enter it manually.</span>
+			</div>
+
 			<div class="ebm-privacy-row">
 				<input id="ebm-privacy" type="checkbox" name="privacy">
 				<label for="ebm-privacy">I accept the privacy policy.</label>
 			</div>
 		`;
+
+		const addressInputs = qsa('[name="address_line_1"], [name="address_line_2"], [name="town"], [name="county"], [name="postcode"]', details);
+
+		addressInputs.forEach(function (input) {
+			input.addEventListener('input', function () {
+				state.addressSelectedFromGoogle = false;
+				updateAddressPreview(app);
+				clearAddressMessage(app);
+			});
+
+			input.addEventListener('change', function () {
+				updateAddressPreview(app);
+			});
+		});
 
 		const detailsActions = document.createElement('div');
 		detailsActions.className = 'ebm-actions';
@@ -944,13 +1191,14 @@
 		detailsNext.addEventListener('click', async function () {
 			state.customer = getCustomer(app);
 
-			if (!state.customer.name || !state.customer.email || !state.customer.phone || !state.customer.address) {
-				setMessage(app, 'Please complete your details before continuing.', 'error');
+			if (!state.customer.name || !state.customer.email || !state.customer.phone || !state.customer.postcode || !state.customer.line_1 || !state.customer.line_2 || !state.customer.town) {
+				setMessage(app, 'Please complete your contact details and service address before continuing.', 'error');
 				return;
 			}
 
-			if (!state.customer.privacy) {
-				setMessage(app, 'Please accept the privacy policy before continuing.', 'error');
+			if (!postcodeAllowed(state.customer.postcode)) {
+				setMessage(app, `Sorry, bookings are only available for ${allowedPostcodeLabel()} postcodes.`, 'error');
+				showAddressMessage(app, `Sorry, bookings are only available for ${allowedPostcodeLabel()} postcodes.`, 'error');
 				return;
 			}
 
@@ -986,7 +1234,6 @@
 
 		const reviewActions = document.createElement('div');
 		reviewActions.className = 'ebm-actions';
-
 		const reviewBack = createButton('Back', 'ebm-btn ebm-btn-secondary');
 		const reviewSubmit = createButton('Confirm booking and pay deposit', 'ebm-btn');
 
@@ -1018,6 +1265,7 @@
 		buildCalendar(dateInput, app, state);
 		loadJobs(app, state, jobList);
 		renderStepState(app, state);
+		initAddressAutocomplete(app, state);
 	}
 
 	function init() {
@@ -1042,4 +1290,4 @@
 	} else {
 		init();
 	}
-})();s
+})();
