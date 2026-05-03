@@ -110,7 +110,7 @@ final class EBM_REST {
 
 		$compact = preg_replace( '/\s+/', '', strtoupper( $postcode ) );
 
-		$prefixes = class_exists( 'EBM_Settings' ) && method_exists( 'EBM_Settings', 'allowed_postcode_prefixes' )
+		$prefixes = method_exists( 'EBM_Settings', 'allowed_postcode_prefixes' )
 			? EBM_Settings::allowed_postcode_prefixes()
 			: array( 'FY' );
 
@@ -123,6 +123,148 @@ final class EBM_REST {
 		}
 
 		return false;
+	}
+
+	private static function parse_timestamp( $value ) {
+		$timestamp = strtotime( (string) $value );
+
+		return $timestamp ? $timestamp : 0;
+	}
+
+	private static function intervals_overlap( $start_a, $end_a, $start_b, $end_b ) {
+		return $start_a < $end_b && $end_a > $start_b;
+	}
+
+	private static function google_event_interval( $event ) {
+		$timezone = wp_timezone();
+
+		$start = (string) ( $event['start'] ?? '' );
+		$end   = (string) ( $event['end'] ?? '' );
+
+		if ( '' === $start ) {
+			return null;
+		}
+
+		try {
+			if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $start ) ) {
+				$start_dt = new DateTimeImmutable( $start . ' 00:00:00', $timezone );
+				$end_dt   = preg_match( '/^\d{4}-\d{2}-\d{2}$/', $end )
+					? new DateTimeImmutable( $end . ' 00:00:00', $timezone )
+					: $start_dt->modify( '+1 day' );
+
+				return array(
+					'start' => $start_dt->getTimestamp(),
+					'end'   => $end_dt->getTimestamp(),
+				);
+			}
+
+			$start_dt = new DateTimeImmutable( $start, $timezone );
+			$end_dt   = '' !== $end ? new DateTimeImmutable( $end, $timezone ) : $start_dt;
+
+			return array(
+				'start' => $start_dt->getTimestamp(),
+				'end'   => max( $end_dt->getTimestamp(), $start_dt->getTimestamp() ),
+			);
+		} catch ( Exception $e ) {
+			return null;
+		}
+	}
+
+	private static function preload_plugin_blocks( $range_start, $range_end ) {
+		global $wpdb;
+
+		$days_table     = EBM_Helpers::table( 'booking_days' );
+		$bookings_table = EBM_Helpers::table( 'bookings' );
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT d.start_at, d.end_at
+				FROM $days_table d
+				INNER JOIN $bookings_table b ON b.id = d.booking_id
+				WHERE b.status IN ('pending_payment','confirmed')
+				AND d.start_at < %s
+				AND d.end_at > %s",
+				$range_end,
+				$range_start
+			)
+		);
+
+		$blocks = array();
+
+		foreach ( (array) $rows as $row ) {
+			$start = self::parse_timestamp( $row->start_at );
+			$end   = self::parse_timestamp( $row->end_at );
+
+			if ( $start && $end && $end > $start ) {
+				$blocks[] = array(
+					'start' => $start,
+					'end'   => $end,
+				);
+			}
+		}
+
+		return $blocks;
+	}
+
+	private static function preload_google_blocks( $range_start, $range_end ) {
+		if ( ! class_exists( 'EBM_Google' ) || ! EBM_Google::connected() || ! method_exists( 'EBM_Google', 'events' ) ) {
+			return array();
+		}
+
+		$events = EBM_Google::events( $range_start, $range_end );
+
+		if ( is_wp_error( $events ) ) {
+			/*
+			 * Fail closed. If Google cannot be checked, avoid selling dates that may be busy.
+			 */
+			return new WP_Error( 'ebm_google_month_check', $events->get_error_message() );
+		}
+
+		$blocks = array();
+
+		foreach ( (array) $events as $event ) {
+			$interval = self::google_event_interval( $event );
+
+			if ( $interval && $interval['end'] > $interval['start'] ) {
+				$blocks[] = $interval;
+			}
+		}
+
+		return $blocks;
+	}
+
+	private static function candidate_available_from_blocks( $segments, $plugin_blocks, $google_blocks, $max_bookings, $buffer_minutes ) {
+		foreach ( (array) $segments as $segment ) {
+			$segment_start = self::parse_timestamp( $segment['start_at'] ?? '' );
+			$segment_end   = self::parse_timestamp( $segment['end_at'] ?? '' );
+
+			if ( ! $segment_start || ! $segment_end || $segment_end <= $segment_start ) {
+				return false;
+			}
+
+			$check_start = $segment_start - ( $buffer_minutes * MINUTE_IN_SECONDS );
+			$check_end   = $segment_end + ( $buffer_minutes * MINUTE_IN_SECONDS );
+
+			$plugin_overlap_count = 0;
+
+			foreach ( $plugin_blocks as $block ) {
+				if ( self::intervals_overlap( $check_start, $check_end, $block['start'], $block['end'] ) ) {
+					$plugin_overlap_count++;
+
+					if ( $plugin_overlap_count >= $max_bookings ) {
+						return false;
+					}
+				}
+			}
+
+			foreach ( $google_blocks as $block ) {
+				if ( self::intervals_overlap( $check_start, $check_end, $block['start'], $block['end'] ) ) {
+					return false;
+				}
+			}
+		}
+
+		return true;
 	}
 
 	public static function jobs() {
@@ -151,9 +293,7 @@ final class EBM_REST {
 
 		if ( ! $job_id ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Invalid job.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Invalid job.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
@@ -179,21 +319,16 @@ final class EBM_REST {
 
 		if ( ! preg_match( '/^\d{4}-\d{2}-\d{2}$/', $date ) ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Invalid date.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Invalid date.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
 
-		$job_id = absint( $request->get_param( 'job_id' ) );
-		$addons = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
-
 		return array(
 			'slots' => EBM_Scheduler::slots(
-				$job_id,
+				absint( $request->get_param( 'job_id' ) ),
 				$date,
-				$addons
+				EBM_Helpers::clean_addons( $request->get_param( 'addons' ) )
 			),
 		);
 	}
@@ -203,9 +338,7 @@ final class EBM_REST {
 
 		if ( ! preg_match( '/^\d{4}-\d{2}$/', $month ) ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Invalid month.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Invalid month.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
@@ -214,21 +347,33 @@ final class EBM_REST {
 
 		if ( ! $job_id ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Please choose a job first.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Please choose a job first.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
 
-		$addons = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
+		$addons   = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
+		$duration = EBM_Scheduler::duration( $job_id, $addons );
 
-		$cache_key = 'ebm_month_availability_' . md5(
+		if ( ! $duration ) {
+			return new WP_REST_Response(
+				array( 'message' => __( 'Invalid job duration.', 'electrical-booking-manager' ) ),
+				400
+			);
+		}
+
+		$cache_key = 'ebm_fast_month_' . md5(
 			wp_json_encode(
 				array(
-					'month'  => $month,
-					'job_id' => $job_id,
-					'addons' => $addons,
+					'month'    => $month,
+					'job_id'   => $job_id,
+					'addons'   => $addons,
+					'duration' => $duration,
+					'start'    => EBM_Settings::get( 'work_start', '09:00' ),
+					'end'      => EBM_Settings::get( 'work_end', '17:00' ),
+					'buffer'   => EBM_Settings::get( 'buffer_minutes', 15 ),
+					'days'     => EBM_Settings::get( 'business_days', array( '1', '2', '3', '4', '5' ) ),
+					'holidays' => EBM_Settings::get( 'holidays', '' ),
 				)
 			)
 		);
@@ -245,19 +390,49 @@ final class EBM_REST {
 			$first_day = new DateTimeImmutable( $month . '-01 00:00:00', $timezone );
 		} catch ( Exception $e ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Invalid month.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Invalid month.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
 
 		$weekday_offset = (int) $first_day->format( 'N' ) - 1;
 		$calendar_start = $first_day->modify( '-' . $weekday_offset . ' days' );
+		$calendar_end   = $calendar_start->modify( '+41 days' )->setTime( 23, 59, 59 );
+
+		$work_start = EBM_Settings::get( 'work_start', '09:00' );
+		$work_end   = EBM_Settings::get( 'work_end', '17:00' );
+
+		$work_start_dt = DateTimeImmutable::createFromFormat( 'H:i', $work_start, $timezone );
+		$work_end_dt   = DateTimeImmutable::createFromFormat( 'H:i', $work_end, $timezone );
+
+		$daily_minutes = 480;
+
+		if ( $work_start_dt && $work_end_dt ) {
+			$daily_minutes = max( 30, (int) ( ( $work_end_dt->getTimestamp() - $work_start_dt->getTimestamp() ) / 60 ) );
+		}
+
+		$extra_days = min( 90, max( 14, (int) ceil( $duration / $daily_minutes ) + 14 ) );
+		$query_end  = $calendar_end->modify( '+' . $extra_days . ' days' );
+
+		$range_start = $calendar_start->format( 'Y-m-d 00:00:00' );
+		$range_end   = $query_end->format( 'Y-m-d 23:59:59' );
+
+		$plugin_blocks = self::preload_plugin_blocks( $range_start, $range_end );
+		$google_blocks = self::preload_google_blocks( $range_start, $range_end );
+
+		if ( is_wp_error( $google_blocks ) ) {
+			return new WP_REST_Response(
+				array( 'message' => $google_blocks->get_error_message() ),
+				500
+			);
+		}
+
+		$max_bookings   = max( 1, absint( EBM_Settings::get( 'max_bookings_per_slot', 1 ) ) );
+		$buffer_minutes = absint( EBM_Settings::get( 'buffer_minutes', 15 ) );
+		$today          = new DateTimeImmutable( 'today', $timezone );
 
 		$available_dates   = array();
 		$unavailable_dates = array();
-		$today             = new DateTimeImmutable( 'today', $timezone );
 
 		for ( $i = 0; $i < 42; $i++ ) {
 			$date_object = $calendar_start->modify( '+' . $i . ' days' );
@@ -268,12 +443,42 @@ final class EBM_REST {
 				continue;
 			}
 
-			$slots = EBM_Scheduler::slots( $job_id, $date, $addons );
+			$mutable_date = new DateTime( $date, $timezone );
 
-			if ( empty( $slots ) ) {
+			if ( ! EBM_Scheduler::is_business_day( $mutable_date ) ) {
 				$unavailable_dates[] = $date;
-			} else {
+				continue;
+			}
+
+			$day_has_slot = false;
+			$cursor       = new DateTimeImmutable( $date . ' ' . $work_start, $timezone );
+			$limit        = new DateTimeImmutable( $date . ' ' . $work_end, $timezone );
+
+			while ( $cursor < $limit ) {
+				$time     = $cursor->format( 'H:i' );
+				$segments = EBM_Scheduler::segments( $date, $time, $duration );
+
+				if (
+					$segments
+					&& self::candidate_available_from_blocks(
+						$segments,
+						$plugin_blocks,
+						$google_blocks,
+						$max_bookings,
+						$buffer_minutes
+					)
+				) {
+					$day_has_slot = true;
+					break;
+				}
+
+				$cursor = $cursor->modify( '+30 minutes' );
+			}
+
+			if ( $day_has_slot ) {
 				$available_dates[] = $date;
+			} else {
+				$unavailable_dates[] = $date;
 			}
 		}
 
@@ -281,6 +486,8 @@ final class EBM_REST {
 			'month'             => $month,
 			'available_dates'   => $available_dates,
 			'unavailable_dates' => $unavailable_dates,
+			'generated_at'      => current_time( 'mysql' ),
+			'strategy'          => 'preloaded_range',
 		);
 
 		set_transient( $cache_key, $response, 60 );
@@ -302,61 +509,26 @@ final class EBM_REST {
 
 		if ( ! $job ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Invalid job.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Invalid job.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
 
-		$addons = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
-
-		$original_total = EBM_Scheduler::price( $job_id, $addons );
-		$total          = $original_total;
-
-		$voucher_code    = class_exists( 'EBM_Discounts' ) ? EBM_Discounts::normalise_code( $request->get_param( 'voucher_code' ) ?? '' ) : '';
-		$discount_id     = 0;
-		$discount_amount = 0;
-
-		if ( '' !== $voucher_code && class_exists( 'EBM_Discounts' ) ) {
-			$discount_result = EBM_Discounts::validate( $voucher_code, $job_id, $total );
-
-			if ( is_wp_error( $discount_result ) ) {
-				return new WP_REST_Response(
-					array(
-						'message' => $discount_result->get_error_message(),
-					),
-					400
-				);
-			}
-
-			$discount_id     = absint( $discount_result['id'] );
-			$discount_amount = (float) $discount_result['discount_amount'];
-			$total           = max( 0, round( $total - $discount_amount, 2 ) );
-		}
-
+		$addons  = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
+		$total   = EBM_Scheduler::price( $job_id, $addons );
 		$deposit = EBM_Scheduler::deposit( $job, $total );
 
 		return array(
-			'original_total'  => round( $original_total, 2 ),
-			'total'           => round( $total, 2 ),
-			'total_amount'    => round( $total, 2 ),
-			'deposit'         => round( $deposit, 2 ),
-			'deposit_amount'  => round( $deposit, 2 ),
-			'balance'         => round( $total - $deposit, 2 ),
-			'balance_amount'  => round( $total - $deposit, 2 ),
-			'voucher_code'    => $voucher_code,
-			'discount_id'     => $discount_id,
-			'discount_amount' => round( $discount_amount, 2 ),
+			'total'   => $total,
+			'deposit' => $deposit,
+			'balance' => round( $total - $deposit, 2 ),
 		);
 	}
 
 	public static function book( WP_REST_Request $request ) {
 		if ( EBM_DB::rate_limited( 'book' ) ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Too many attempts. Please try again later.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Too many attempts. Please try again later.', 'electrical-booking-manager' ) ),
 				429
 			);
 		}
@@ -374,9 +546,7 @@ final class EBM_REST {
 
 		if ( ! $job ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Invalid job.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Invalid job.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
@@ -387,45 +557,40 @@ final class EBM_REST {
 		$email    = sanitize_email( $customer['email'] ?? '' );
 		$phone    = sanitize_text_field( $customer['phone'] ?? '' );
 		$postcode = self::normalise_uk_postcode( $customer['postcode'] ?? '' );
-		$line_1   = sanitize_text_field( $customer['line_1'] ?? '' );
-		$line_2   = sanitize_text_field( $customer['line_2'] ?? '' );
-		$town     = sanitize_text_field( $customer['town'] ?? '' );
-		$county   = sanitize_text_field( $customer['county'] ?? '' );
 
-		$address_parts = array_filter(
-			array(
-				$line_1,
-				$line_2,
-				$town,
-				$county,
-				$postcode,
-			)
-		);
+		$line_1  = sanitize_text_field( $customer['line_1'] ?? '' );
+		$line_2  = sanitize_text_field( $customer['line_2'] ?? '' );
+		$town    = sanitize_text_field( $customer['town'] ?? '' );
+		$county  = sanitize_text_field( $customer['county'] ?? '' );
+		$address = sanitize_textarea_field( $customer['address'] ?? '' );
 
-		$address = implode( "\n", $address_parts );
-
-		$privacy = false;
-
-		if ( isset( $customer['privacy'] ) ) {
-			$privacy = (bool) $customer['privacy'];
-		} elseif ( null !== $request->get_param( 'privacy' ) ) {
-			$privacy = (bool) $request->get_param( 'privacy' );
+		if ( '' === $address ) {
+			$address = implode(
+				"\n",
+				array_filter(
+					array(
+						$line_1,
+						$line_2,
+						$town,
+						$county,
+						$postcode,
+					)
+				)
+			);
 		}
 
-		if ( ! $privacy || ! $name || ! is_email( $email ) || ! $phone || ! $address || ! $postcode ) {
+		$privacy = isset( $customer['privacy'] ) ? (bool) $customer['privacy'] : (bool) $request->get_param( 'privacy' );
+
+		if ( ! $privacy || ! $name || ! is_email( $email ) || ! $phone || ! $address ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Please complete your details and accept the privacy notice.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Please complete your details and accept the privacy notice.', 'electrical-booking-manager' ) ),
 				400
 			);
 		}
 
-		if ( ! self::postcode_allowed( $postcode ) ) {
+		if ( $postcode && ! self::postcode_allowed( $postcode ) ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'Sorry, bookings are only available for FY postcodes.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'Sorry, bookings are only available for FY postcodes.', 'electrical-booking-manager' ) ),
 				403
 			);
 		}
@@ -438,83 +603,32 @@ final class EBM_REST {
 
 		if ( ! $segments || ! EBM_Scheduler::available( $segments ) ) {
 			return new WP_REST_Response(
-				array(
-					'message' => __( 'That slot is no longer available.', 'electrical-booking-manager' ),
-				),
+				array( 'message' => __( 'That slot is no longer available.', 'electrical-booking-manager' ) ),
 				409
 			);
 		}
 
-		$original_total = EBM_Scheduler::price( $job_id, $addons );
-		$total          = $original_total;
+		$total   = EBM_Scheduler::price( $job_id, $addons );
+		$deposit = EBM_Scheduler::deposit( $job, $total );
+		$now     = current_time( 'mysql' );
 
-		$voucher_code    = class_exists( 'EBM_Discounts' ) ? EBM_Discounts::normalise_code( $request->get_param( 'voucher_code' ) ?? '' ) : '';
-		$discount_id     = 0;
-		$discount_amount = 0;
-
-		if ( '' !== $voucher_code && class_exists( 'EBM_Discounts' ) ) {
-			$discount_result = EBM_Discounts::validate( $voucher_code, $job_id, $total );
-
-			if ( is_wp_error( $discount_result ) ) {
-				return new WP_REST_Response(
-					array(
-						'message' => $discount_result->get_error_message(),
-					),
-					400
-				);
-			}
-
-			$discount_id     = absint( $discount_result['id'] );
-			$discount_amount = (float) $discount_result['discount_amount'];
-			$total           = max( 0, round( $total - $discount_amount, 2 ) );
-		}
-
-		$deposit        = EBM_Scheduler::deposit( $job, $total );
-		$balance        = round( $total - $deposit, 2 );
-		$now            = current_time( 'mysql' );
-		$initial_status = $deposit > 0 ? 'pending_payment' : 'confirmed';
-
-		$customers_table      = EBM_Helpers::table( 'customers' );
-		$existing_customer_id = (int) $wpdb->get_var(
-			$wpdb->prepare(
-				"SELECT id FROM $customers_table WHERE email = %s ORDER BY id DESC LIMIT 1",
-				$email
-			)
+		$wpdb->insert(
+			EBM_Helpers::table( 'customers' ),
+			array(
+				'name'                => $name,
+				'email'               => $email,
+				'phone'               => $phone,
+				'address'             => $address,
+				'privacy_accepted_at' => $now,
+				'created_at'          => $now,
+				'updated_at'          => $now,
+			),
+			array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
 		);
 
-		if ( $existing_customer_id ) {
-			$wpdb->update(
-				$customers_table,
-				array(
-					'name'                => $name,
-					'phone'               => $phone,
-					'address'             => $address,
-					'privacy_accepted_at' => $now,
-					'updated_at'          => $now,
-				),
-				array( 'id' => $existing_customer_id ),
-				array( '%s', '%s', '%s', '%s', '%s' ),
-				array( '%d' )
-			);
+		$customer_id = (int) $wpdb->insert_id;
 
-			$customer_id = $existing_customer_id;
-		} else {
-			$wpdb->insert(
-				$customers_table,
-				array(
-					'name'                => $name,
-					'email'               => $email,
-					'phone'               => $phone,
-					'address'             => $address,
-					'privacy_accepted_at' => $now,
-					'created_at'          => $now,
-					'updated_at'          => $now,
-				),
-				array( '%s', '%s', '%s', '%s', '%s', '%s', '%s' )
-			);
-
-			$customer_id = (int) $wpdb->insert_id;
-		}
+		$status = $deposit > 0 ? 'pending_payment' : 'confirmed';
 
 		$wpdb->insert(
 			EBM_Helpers::table( 'bookings' ),
@@ -522,51 +636,22 @@ final class EBM_REST {
 				'public_token'       => EBM_Helpers::token(),
 				'job_id'             => $job_id,
 				'customer_id'        => $customer_id,
-				'status'             => $initial_status,
+				'status'             => $status,
 				'start_at'           => $segments[0]['start_at'],
 				'end_at'             => end( $segments )['end_at'],
 				'total_minutes'      => $duration,
 				'total_amount'       => $total,
 				'deposit_amount'     => $deposit,
-				'balance_amount'     => $balance,
+				'balance_amount'     => round( $total - $deposit, 2 ),
 				'addons_json'        => wp_json_encode( $addons ),
-				'custom_fields_json' => wp_json_encode(
-					array_map(
-						'sanitize_text_field',
-						(array) $request->get_param( 'custom_fields' )
-					)
-				),
+				'custom_fields_json' => wp_json_encode( array_map( 'sanitize_text_field', (array) $request->get_param( 'custom_fields' ) ) ),
 				'created_at'         => $now,
 				'updated_at'         => $now,
 			),
-			array(
-				'%s',
-				'%d',
-				'%d',
-				'%s',
-				'%s',
-				'%s',
-				'%d',
-				'%f',
-				'%f',
-				'%f',
-				'%s',
-				'%s',
-				'%s',
-				'%s',
-			)
+			array( '%s', '%d', '%d', '%s', '%s', '%s', '%d', '%f', '%f', '%f', '%s', '%s', '%s', '%s' )
 		);
 
 		$booking_id = (int) $wpdb->insert_id;
-
-		if ( ! $booking_id ) {
-			return new WP_REST_Response(
-				array(
-					'message' => __( 'The booking could not be created.', 'electrical-booking-manager' ),
-				),
-				500
-			);
-		}
 
 		foreach ( $segments as $segment ) {
 			$wpdb->insert(
@@ -582,10 +667,6 @@ final class EBM_REST {
 		}
 
 		if ( $deposit <= 0 ) {
-			if ( $discount_id && class_exists( 'EBM_Discounts' ) ) {
-				EBM_Discounts::increment_usage( $discount_id );
-			}
-
 			if ( class_exists( 'EBM_Google' ) && EBM_Google::connected() ) {
 				EBM_Google::create_event( $booking_id );
 			}
@@ -595,13 +676,9 @@ final class EBM_REST {
 				'checkout_url'     => '',
 				'payment_required' => false,
 				'message'          => __( 'Booking confirmed. No payment is due.', 'electrical-booking-manager' ),
-				'voucher_code'     => $voucher_code,
-				'discount_id'      => $discount_id,
-				'discount_amount'  => round( $discount_amount, 2 ),
-				'original_total'   => round( $original_total, 2 ),
 				'total'            => round( $total, 2 ),
 				'deposit'          => round( $deposit, 2 ),
-				'balance'          => round( $balance, 2 ),
+				'balance'          => round( $total - $deposit, 2 ),
 			);
 		}
 
@@ -609,9 +686,7 @@ final class EBM_REST {
 
 		if ( is_wp_error( $session ) ) {
 			return new WP_REST_Response(
-				array(
-					'message' => $session->get_error_message(),
-				),
+				array( 'message' => $session->get_error_message() ),
 				500
 			);
 		}
@@ -620,13 +695,6 @@ final class EBM_REST {
 			'booking_id'       => $booking_id,
 			'checkout_url'     => esc_url_raw( $session['url'] ?? '' ),
 			'payment_required' => true,
-			'voucher_code'     => $voucher_code,
-			'discount_id'      => $discount_id,
-			'discount_amount'  => round( $discount_amount, 2 ),
-			'original_total'   => round( $original_total, 2 ),
-			'total'            => round( $total, 2 ),
-			'deposit'          => round( $deposit, 2 ),
-			'balance'          => round( $balance, 2 ),
 		);
 	}
 }

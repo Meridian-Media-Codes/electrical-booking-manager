@@ -18,14 +18,22 @@ final class EBM_Google {
 		return '' !== EBM_Settings::get( 'google_refresh_token', '' );
 	}
 
-	private static function google_datetime( $datetime ) {
-		try {
-			$date = new DateTimeImmutable( (string) $datetime, wp_timezone() );
-		} catch ( Exception $e ) {
-			return '';
-		}
+	private static function clear_cache() {
+		global $wpdb;
 
-		return $date->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d\TH:i:s\Z' );
+		delete_transient( 'ebm_google_access_token' );
+
+		$wpdb->query(
+			"DELETE FROM $wpdb->options
+			WHERE option_name LIKE '_transient_ebm_google_events_%'
+			OR option_name LIKE '_transient_timeout_ebm_google_events_%'"
+		);
+	}
+
+	private static function google_timezone() {
+		$timezone = wp_timezone_string();
+
+		return $timezone ? $timezone : 'Europe/London';
 	}
 
 	private static function google_local_datetime( $datetime ) {
@@ -38,24 +46,14 @@ final class EBM_Google {
 		return $date->format( 'Y-m-d\TH:i:s' );
 	}
 
-	private static function google_timezone() {
-		$timezone = wp_timezone_string();
-
-		if ( ! $timezone ) {
-			$timezone = 'Europe/London';
+	private static function google_utc_datetime( $datetime ) {
+		try {
+			$date = new DateTimeImmutable( (string) $datetime, wp_timezone() );
+		} catch ( Exception $e ) {
+			return '';
 		}
 
-		return $timezone;
-	}
-
-	private static function clear_google_event_cache() {
-		global $wpdb;
-
-		$wpdb->query(
-			"DELETE FROM $wpdb->options
-			WHERE option_name LIKE '_transient_ebm_google_events_%'
-			OR option_name LIKE '_transient_timeout_ebm_google_events_%'"
-		);
+		return $date->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d\TH:i:s\Z' );
 	}
 
 	public static function connect() {
@@ -77,7 +75,7 @@ final class EBM_Google {
 				'client_id'              => $client_id,
 				'redirect_uri'           => self::redirect_uri(),
 				'response_type'          => 'code',
-				'scope'                  => 'https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/calendar.events',
+				'scope'                  => 'https://www.googleapis.com/auth/calendar.events',
 				'access_type'            => 'offline',
 				'prompt'                 => 'consent',
 				'include_granted_scopes' => 'true',
@@ -146,8 +144,7 @@ final class EBM_Google {
 		$settings['google_refresh_token'] = EBM_Helpers::encrypt( sanitize_text_field( $body['refresh_token'] ) );
 
 		update_option( EBM_Settings::OPTION, $settings, false );
-		delete_transient( 'ebm_google_access_token' );
-		self::clear_google_event_cache();
+		self::clear_cache();
 
 		wp_safe_redirect( admin_url( 'admin.php?page=ebm-settings&google=connected' ) );
 		exit;
@@ -162,33 +159,10 @@ final class EBM_Google {
 		$settings['google_refresh_token'] = '';
 
 		update_option( EBM_Settings::OPTION, $settings, false );
-		delete_transient( 'ebm_google_access_token' );
-		self::clear_google_event_cache();
+		self::clear_cache();
 
 		wp_safe_redirect( admin_url( 'admin.php?page=ebm-settings&google=disconnected' ) );
 		exit;
-	}
-
-	private static function google_error_message( $response, $fallback ) {
-		if ( is_wp_error( $response ) ) {
-			return $response->get_error_message();
-		}
-
-		$body = json_decode( wp_remote_retrieve_body( $response ), true );
-
-		if ( isset( $body['error']['message'] ) ) {
-			return sanitize_text_field( $body['error']['message'] );
-		}
-
-		if ( isset( $body['error_description'] ) ) {
-			return sanitize_text_field( $body['error_description'] );
-		}
-
-		if ( isset( $body['error'] ) && is_string( $body['error'] ) ) {
-			return sanitize_text_field( $body['error'] );
-		}
-
-		return $fallback;
 	}
 
 	private static function token() {
@@ -235,44 +209,120 @@ final class EBM_Google {
 		return $access_token;
 	}
 
-	public static function conflicts( $segments ) {
+	private static function error_message( $response, $fallback ) {
+		if ( is_wp_error( $response ) ) {
+			return $response->get_error_message();
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( isset( $body['error']['message'] ) ) {
+			return sanitize_text_field( $body['error']['message'] );
+		}
+
+		if ( isset( $body['error_description'] ) ) {
+			return sanitize_text_field( $body['error_description'] );
+		}
+
+		if ( isset( $body['error'] ) && is_string( $body['error'] ) ) {
+			return sanitize_text_field( $body['error'] );
+		}
+
+		return $fallback;
+	}
+
+	public static function events( $time_min, $time_max ) {
 		if ( ! self::connected() ) {
-			return false;
+			return array();
 		}
 
-		$events = self::events_for_segments( $segments );
+		$formatted_min = self::google_utc_datetime( $time_min );
+		$formatted_max = self::google_utc_datetime( $time_max );
 
-		if ( is_wp_error( $events ) ) {
-			return true;
+		if ( '' === $formatted_min || '' === $formatted_max ) {
+			return new WP_Error(
+				'ebm_google_bad_range',
+				__( 'The calendar date range could not be formatted for Google.', 'electrical-booking-manager' )
+			);
 		}
 
-		foreach ( $segments as $segment ) {
-			$segment_start = strtotime( $segment['start_at'] ?? '' );
-			$segment_end   = strtotime( $segment['end_at'] ?? '' );
+		$calendar_id = EBM_Settings::get( 'google_calendar_id', 'primary' );
+		$cache_key   = 'ebm_google_events_' . md5( $calendar_id . '|' . $formatted_min . '|' . $formatted_max );
+		$cached      = get_transient( $cache_key );
 
-			if ( ! $segment_start || ! $segment_end ) {
-				return true;
+		if ( false !== $cached && is_array( $cached ) ) {
+			return $cached;
+		}
+
+		$token = self::token();
+
+		if ( ! $token ) {
+			return new WP_Error(
+				'ebm_google_token',
+				__( 'Could not refresh the Google Calendar access token.', 'electrical-booking-manager' )
+			);
+		}
+
+		$url = add_query_arg(
+			array(
+				'timeMin'      => $formatted_min,
+				'timeMax'      => $formatted_max,
+				'singleEvents' => 'true',
+				'orderBy'      => 'startTime',
+			),
+			'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode( $calendar_id ) . '/events'
+		);
+
+		$response = wp_remote_get(
+			$url,
+			array(
+				'timeout' => 12,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $token,
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
+			return new WP_Error(
+				'ebm_google_events',
+				self::error_message(
+					$response,
+					__( 'Google Calendar events could not be loaded.', 'electrical-booking-manager' )
+				)
+			);
+		}
+
+		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
+		$events = array();
+
+		foreach ( (array) ( $body['items'] ?? array() ) as $item ) {
+			if ( 'cancelled' === ( $item['status'] ?? '' ) ) {
+				continue;
 			}
 
-			foreach ( $events as $event ) {
-				$event_start = strtotime( $event['start'] ?? '' );
-				$event_end   = strtotime( $event['end'] ?? '' );
+			$start = $item['start']['dateTime'] ?? ( $item['start']['date'] ?? '' );
+			$end   = $item['end']['dateTime'] ?? ( $item['end']['date'] ?? '' );
 
-				if ( ! $event_start ) {
-					continue;
-				}
-
-				if ( ! $event_end ) {
-					$event_end = $event_start;
-				}
-
-				if ( $segment_start < $event_end && $segment_end > $event_start ) {
-					return true;
-				}
+			if ( '' === $start ) {
+				continue;
 			}
+
+			$events[] = array(
+				'id'      => sanitize_text_field( $item['id'] ?? '' ),
+				'summary' => sanitize_text_field( $item['summary'] ?? __( 'Google event', 'electrical-booking-manager' ) ),
+				'start'   => sanitize_text_field( $start ),
+				'end'     => sanitize_text_field( $end ),
+			);
 		}
 
-		return false;
+		set_transient( $cache_key, $events, 60 );
+
+		return $events;
 	}
 
 	private static function events_for_segments( $segments ) {
@@ -301,6 +351,46 @@ final class EBM_Google {
 		return self::events( $time_min, $time_max );
 	}
 
+	public static function conflicts( $segments ) {
+		if ( ! self::connected() ) {
+			return false;
+		}
+
+		$events = self::events_for_segments( $segments );
+
+		if ( is_wp_error( $events ) ) {
+			return true;
+		}
+
+		foreach ( (array) $segments as $segment ) {
+			$segment_start = strtotime( $segment['start_at'] ?? '' );
+			$segment_end   = strtotime( $segment['end_at'] ?? '' );
+
+			if ( ! $segment_start || ! $segment_end ) {
+				return true;
+			}
+
+			foreach ( $events as $event ) {
+				$event_start = strtotime( $event['start'] ?? '' );
+				$event_end   = strtotime( $event['end'] ?? '' );
+
+				if ( ! $event_start ) {
+					continue;
+				}
+
+				if ( ! $event_end ) {
+					$event_end = $event_start;
+				}
+
+				if ( $segment_start < $event_end && $segment_end > $event_start ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
 	public static function create_event( $booking_id ) {
 		global $wpdb;
 
@@ -315,7 +405,7 @@ final class EBM_Google {
 				INNER JOIN ' . EBM_Helpers::table( 'jobs' ) . ' j ON j.id = b.job_id
 				INNER JOIN ' . EBM_Helpers::table( 'customers' ) . ' c ON c.id = b.customer_id
 				WHERE b.id = %d',
-				$booking_id
+				absint( $booking_id )
 			)
 		);
 
@@ -367,12 +457,12 @@ final class EBM_Google {
 			$wpdb->update(
 				EBM_Helpers::table( 'bookings' ),
 				array( 'google_event_id' => sanitize_text_field( $body['id'] ) ),
-				array( 'id' => $booking_id ),
+				array( 'id' => absint( $booking_id ) ),
 				array( '%s' ),
 				array( '%d' )
 			);
 
-			self::clear_google_event_cache();
+			self::clear_cache();
 
 			return sanitize_text_field( $body['id'] );
 		}
@@ -380,101 +470,7 @@ final class EBM_Google {
 		return '';
 	}
 
-	public static function events( $time_min, $time_max ) {
-		if ( ! self::connected() ) {
-			return array();
-		}
-
-		$formatted_min = self::google_datetime( $time_min );
-		$formatted_max = self::google_datetime( $time_max );
-
-		if ( '' === $formatted_min || '' === $formatted_max ) {
-			return new WP_Error(
-				'ebm_google_bad_time',
-				__( 'The calendar date range could not be formatted for Google.', 'electrical-booking-manager' )
-			);
-		}
-
-		$calendar_id = EBM_Settings::get( 'google_calendar_id', 'primary' );
-		$cache_key   = 'ebm_google_events_' . md5( $calendar_id . '|' . $formatted_min . '|' . $formatted_max );
-		$cached      = get_transient( $cache_key );
-
-		if ( false !== $cached && is_array( $cached ) ) {
-			return $cached;
-		}
-
-		$token = self::token();
-
-		if ( ! $token ) {
-			return new WP_Error(
-				'ebm_google_token',
-				__( 'Could not refresh the Google Calendar access token. Clear the saved token, save settings, then connect again.', 'electrical-booking-manager' )
-			);
-		}
-
-		$url = add_query_arg(
-			array(
-				'timeMin'      => $formatted_min,
-				'timeMax'      => $formatted_max,
-				'singleEvents' => 'true',
-				'orderBy'      => 'startTime',
-			),
-			'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode( $calendar_id ) . '/events'
-		);
-
-		$response = wp_remote_get(
-			$url,
-			array(
-				'timeout' => 12,
-				'headers' => array(
-					'Authorization' => 'Bearer ' . $token,
-				),
-			)
-		);
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
-			return new WP_Error(
-				'ebm_google_events',
-				self::google_error_message(
-					$response,
-					__( 'Google Calendar events could not be loaded.', 'electrical-booking-manager' )
-				)
-			);
-		}
-
-		$body   = json_decode( wp_remote_retrieve_body( $response ), true );
-		$events = array();
-
-		foreach ( (array) ( $body['items'] ?? array() ) as $item ) {
-			if ( 'cancelled' === ( $item['status'] ?? '' ) ) {
-				continue;
-			}
-
-			$start = $item['start']['dateTime'] ?? ( $item['start']['date'] ?? '' );
-			$end   = $item['end']['dateTime'] ?? ( $item['end']['date'] ?? '' );
-
-			if ( ! $start ) {
-				continue;
-			}
-
-			$events[] = array(
-				'id'      => sanitize_text_field( $item['id'] ?? '' ),
-				'summary' => sanitize_text_field( $item['summary'] ?? __( 'Google event', 'electrical-booking-manager' ) ),
-				'start'   => sanitize_text_field( $start ),
-				'end'     => sanitize_text_field( $end ),
-			);
-		}
-
-		set_transient( $cache_key, $events, 60 );
-
-		return $events;
-	}
-
-		public static function delete_event( $event_id ) {
+	public static function delete_event( $event_id ) {
 		if ( ! self::connected() ) {
 			return false;
 		}
@@ -491,10 +487,8 @@ final class EBM_Google {
 			return false;
 		}
 
-		$calendar_id = rawurlencode( EBM_Settings::get( 'google_calendar_id', 'primary' ) );
-
 		$response = wp_remote_request(
-			'https://www.googleapis.com/calendar/v3/calendars/' . $calendar_id . '/events/' . rawurlencode( $event_id ),
+			'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode( EBM_Settings::get( 'google_calendar_id', 'primary' ) ) . '/events/' . rawurlencode( $event_id ),
 			array(
 				'method'  => 'DELETE',
 				'timeout' => 20,
@@ -508,39 +502,8 @@ final class EBM_Google {
 			return false;
 		}
 
-		$code = wp_remote_retrieve_response_code( $response );
+		self::clear_cache();
 
-		self::clear_google_event_cache();
-
-		return in_array( $code, array( 200, 204, 410, 404 ), true );
-	}
-
-	public static function recreate_event( $booking_id ) {
-		global $wpdb;
-
-		$booking = $wpdb->get_row(
-			$wpdb->prepare(
-				'SELECT * FROM ' . EBM_Helpers::table( 'bookings' ) . ' WHERE id = %d',
-				absint( $booking_id )
-			)
-		);
-
-		if ( ! $booking ) {
-			return '';
-		}
-
-		if ( ! empty( $booking->google_event_id ) ) {
-			self::delete_event( $booking->google_event_id );
-
-			$wpdb->update(
-				EBM_Helpers::table( 'bookings' ),
-				array( 'google_event_id' => '' ),
-				array( 'id' => absint( $booking_id ) ),
-				array( '%s' ),
-				array( '%d' )
-			);
-		}
-
-		return self::create_event( absint( $booking_id ) );
+		return in_array( wp_remote_retrieve_response_code( $response ), array( 200, 204, 404, 410 ), true );
 	}
 }
