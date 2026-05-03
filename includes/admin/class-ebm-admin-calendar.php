@@ -29,6 +29,118 @@ final class EBM_Admin_Calendar {
 		$events_by_day[ $day_key ][] = $event;
 	}
 
+	private static function normalise_google_datetime( $value, DateTimeZone $timezone, $is_end = false ) {
+		$value = (string) $value;
+
+		if ( '' === $value ) {
+			return null;
+		}
+
+		try {
+			if ( preg_match( '/^\d{4}-\d{2}-\d{2}$/', $value ) ) {
+				$date = new DateTimeImmutable( $value . ' 00:00:00', $timezone );
+
+				if ( $is_end ) {
+					$date = $date->modify( '-1 second' );
+				}
+
+				return $date;
+			}
+
+			return new DateTimeImmutable( $value, $timezone );
+		} catch ( Exception $e ) {
+			return null;
+		}
+	}
+
+	private static function add_google_event_to_days( &$events_by_day, $event, DateTimeZone $timezone, $calendar_start, $calendar_end ) {
+		$start_raw = (string) ( $event['start'] ?? '' );
+		$end_raw   = (string) ( $event['end'] ?? '' );
+		$title     = sanitize_text_field( $event['summary'] ?? __( 'Google event', 'electrical-booking-manager' ) );
+
+		if ( '' === $start_raw ) {
+			return;
+		}
+
+		$is_all_day = (bool) preg_match( '/^\d{4}-\d{2}-\d{2}$/', $start_raw );
+
+		$start = self::normalise_google_datetime( $start_raw, $timezone, false );
+		$end   = self::normalise_google_datetime( $end_raw, $timezone, true );
+
+		if ( ! $start ) {
+			return;
+		}
+
+		if ( ! $end || $end < $start ) {
+			$end = $start;
+		}
+
+		$calendar_start_dt = self::normalise_google_datetime( $calendar_start, $timezone, false );
+		$calendar_end_dt   = self::normalise_google_datetime( $calendar_end, $timezone, false );
+
+		if ( $calendar_start_dt && $end < $calendar_start_dt ) {
+			return;
+		}
+
+		if ( $calendar_end_dt && $start > $calendar_end_dt ) {
+			return;
+		}
+
+		$first_day = $start->setTime( 0, 0, 0 );
+		$last_day  = $end->setTime( 0, 0, 0 );
+
+		$total_days = max(
+			1,
+			(int) $first_day->diff( $last_day )->days + 1
+		);
+
+		$cursor    = $first_day;
+		$day_index = 1;
+
+		while ( $cursor <= $last_day ) {
+			$day_key = $cursor->format( 'Y-m-d' );
+
+			$display_title = $title;
+
+			if ( $total_days > 1 ) {
+				$display_title = sprintf(
+					/* translators: 1: event title, 2: current day, 3: total days */
+					__( '%1$s (Day %2$d/%3$d)', 'electrical-booking-manager' ),
+					$title,
+					$day_index,
+					$total_days
+				);
+			}
+
+			if ( $is_all_day ) {
+				$time_label = __( 'All day', 'electrical-booking-manager' );
+			} elseif ( 1 === $day_index ) {
+				$time_label = $start->format( 'H:i' );
+			} elseif ( $day_index === $total_days ) {
+				$time_label = __( 'Until', 'electrical-booking-manager' ) . ' ' . $end->format( 'H:i' );
+			} else {
+				$time_label = __( 'Continues', 'electrical-booking-manager' );
+			}
+
+			self::add_event(
+				$events_by_day,
+				$day_key,
+				array(
+					'type'     => 'google',
+					'status'   => 'google',
+					'time'     => $time_label,
+					'title'    => $display_title,
+					'customer' => __( 'Google Calendar', 'electrical-booking-manager' ),
+					'url'      => '',
+					'end_at'   => $end_raw,
+				)
+			);
+
+			$cursor = $cursor->modify( '+1 day' );
+			$day_index++;
+		}
+	}
+
 	public static function render() {
 		EBM_Admin::cap();
 
@@ -59,11 +171,6 @@ final class EBM_Admin_Calendar {
 		$jobs_table         = EBM_Helpers::table( 'jobs' );
 		$customers_table    = EBM_Helpers::table( 'customers' );
 
-		/*
-		 * Main query:
-		 * - Prefer rows from booking_days, because those represent the actual occupied work days.
-		 * - Fall back to bookings.start_at/end_at for old bookings that may not have booking_days rows.
-		 */
 		$bookings = $wpdb->get_results(
 			$wpdb->prepare(
 				"SELECT
@@ -97,9 +204,6 @@ final class EBM_Admin_Calendar {
 			)
 		);
 
-		/*
-		 * Count total booking day rows for each booking, so we can label larger jobs as Day 1/2 etc.
-		 */
 		$booking_ids = array();
 
 		foreach ( $bookings as $booking ) {
@@ -128,11 +232,11 @@ final class EBM_Admin_Calendar {
 			}
 		}
 
-		$day_indexes          = array();
-		$events_by_day        = array();
-		$plugin_google_ids    = array();
-		$plugin_fingerprints  = array();
-		$rendered_fallbacks   = array();
+		$day_indexes         = array();
+		$events_by_day       = array();
+		$plugin_google_ids   = array();
+		$plugin_fingerprints = array();
+		$rendered_fallbacks  = array();
 
 		foreach ( $bookings as $booking ) {
 			$booking_id = absint( $booking->id );
@@ -142,16 +246,10 @@ final class EBM_Admin_Calendar {
 			$event_end       = $has_booking_day ? $booking->day_end_at : $booking->end_at;
 			$work_date       = $has_booking_day ? $booking->work_date : mysql2date( 'Y-m-d', $booking->start_at, false );
 
-			/*
-			 * If a booking has booking_days rows, do not also render the fallback booking row.
-			 */
 			if ( ! $has_booking_day && ! empty( $day_counts[ $booking_id ] ) ) {
 				continue;
 			}
 
-			/*
-			 * Avoid duplicated fallback rows if an old booking spans the month range.
-			 */
 			$fallback_key = $booking_id . '|' . $work_date . '|' . $event_start;
 
 			if ( ! $has_booking_day && isset( $rendered_fallbacks[ $fallback_key ] ) ) {
@@ -228,26 +326,12 @@ final class EBM_Admin_Calendar {
 						continue;
 					}
 
-					$timestamp = strtotime( $start );
-
-					if ( ! $timestamp ) {
-						continue;
-					}
-
-					$day_key = wp_date( 'Y-m-d', $timestamp, $timezone );
-
-					self::add_event(
+					self::add_google_event_to_days(
 						$events_by_day,
-						$day_key,
-						array(
-							'type'     => 'google',
-							'status'   => 'google',
-							'time'     => wp_date( 'H:i', $timestamp, $timezone ),
-							'title'    => $title,
-							'customer' => __( 'Google Calendar', 'electrical-booking-manager' ),
-							'url'      => '',
-							'end_at'   => $event['end'] ?? '',
-						)
+						$event,
+						$timezone,
+						$db_start,
+						$db_end
 					);
 				}
 			}
