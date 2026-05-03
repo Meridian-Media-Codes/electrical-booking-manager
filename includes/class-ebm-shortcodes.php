@@ -86,6 +86,19 @@ final class EBM_Shortcodes {
 				'cacheVersion'            => self::frontend_asset_version( 'assets/js/frontend.js' ),
 				'googlePlacesApiKey'      => $places_api_key,
 				'allowedPostcodePrefixes' => $allowed_prefixes,
+				'homeUrl'                 => esc_url_raw( home_url( '/' ) ),
+				'logoUrl'                 => esc_url_raw(
+					get_theme_mod( 'custom_logo' )
+						? wp_get_attachment_image_url( get_theme_mod( 'custom_logo' ), 'medium' )
+						: ''
+				),
+				'i18n'                    => array(
+					'booking_success'      => __( 'Booking successful', 'electrical-booking-manager' ),
+					'booking_success_text' => __( 'Your booking has been received successfully.', 'electrical-booking-manager' ),
+					'payment_success_text' => __( 'Your payment was successful and your booking is confirmed.', 'electrical-booking-manager' ),
+					'back_home'            => __( 'Back to home', 'electrical-booking-manager' ),
+					'make_another'         => __( 'Make another booking', 'electrical-booking-manager' ),
+				),
 			)
 		);
 

@@ -89,6 +89,9 @@
 			cacheVersion: config.cacheVersion || '1',
 			googlePlacesApiKey: config.googlePlacesApiKey || '',
 			allowedPostcodePrefixes: Array.isArray(config.allowedPostcodePrefixes) && config.allowedPostcodePrefixes.length ? config.allowedPostcodePrefixes : ['FY'],
+			homeUrl: config.homeUrl || '/',
+			logoUrl: config.logoUrl || '',
+			i18n: config.i18n || {},
 		};
 	}
 
@@ -241,6 +244,148 @@
 			style: 'currency',
 			currency: 'GBP',
 		}).format(number);
+	}
+
+	function formatDisplayDate(dateString) {
+		if (!dateString) {
+			return '';
+		}
+
+		const iso = ukToIso(dateString);
+		const date = new Date(`${iso}T00:00:00`);
+
+		if (Number.isNaN(date.getTime())) {
+			return dateString;
+		}
+
+		return date.toLocaleDateString('en-GB', {
+			day: '2-digit',
+			month: '2-digit',
+			year: 'numeric',
+		});
+	}
+
+	function i18n(key, fallback) {
+		const config = getConfig();
+		return config.i18n && config.i18n[key] ? config.i18n[key] : fallback;
+	}
+
+	function buildSuccessScreen(data) {
+		const config = getConfig();
+		const title = data.title || i18n('booking_success', 'Booking successful');
+		const text = data.text || i18n('booking_success_text', 'Your booking has been received successfully.');
+		const date = data.date ? formatDisplayDate(data.date) : '';
+		const time = data.time || '';
+		const reference = data.reference || '';
+
+		const logo = config.logoUrl ? `
+			<div class="ebm-success-logo-wrap">
+				<img src="${escapeHtml(config.logoUrl)}" alt="" class="ebm-success-logo">
+			</div>
+		` : '';
+
+		let meta = '';
+
+		if (date || time || reference) {
+			meta += '<div class="ebm-success-meta">';
+
+			if (date) {
+				meta += `<div class="ebm-success-meta-row"><span>Date</span><strong>${escapeHtml(date)}</strong></div>`;
+			}
+
+			if (time) {
+				meta += `<div class="ebm-success-meta-row"><span>Time</span><strong>${escapeHtml(time)}</strong></div>`;
+			}
+
+			if (reference) {
+				meta += `<div class="ebm-success-meta-row"><span>Reference</span><strong>#${escapeHtml(reference)}</strong></div>`;
+			}
+
+			meta += '</div>';
+		}
+
+		return `
+			<div class="ebm-booking-shell ebm-success-shell">
+				<div class="ebm-success-screen">
+					<div class="ebm-success-art" aria-hidden="true">
+						<div class="ebm-success-calendar">
+							<div class="ebm-success-calendar-top"></div>
+							<div class="ebm-success-calendar-grid">
+								<span></span><span></span><span></span><span></span>
+								<span></span><span></span><span></span><span></span>
+								<span></span><span></span><span></span><span></span>
+							</div>
+						</div>
+						<div class="ebm-success-tick">
+							<svg viewBox="0 0 52 52" aria-hidden="true">
+								<circle cx="26" cy="26" r="26"></circle>
+								<path d="M14 27.5l8 8L38 19.5"></path>
+							</svg>
+						</div>
+					</div>
+
+					${logo}
+
+					<h2 class="ebm-success-title">${escapeHtml(title)}</h2>
+					<p class="ebm-success-text">${escapeHtml(text)}</p>
+
+					${meta}
+
+					<div class="ebm-success-actions">
+						<a class="ebm-btn" href="${escapeHtml(config.homeUrl)}">${escapeHtml(i18n('back_home', 'Back to home'))}</a>
+						<button type="button" class="ebm-btn ebm-btn-secondary" data-ebm-book-again>${escapeHtml(i18n('make_another', 'Make another booking'))}</button>
+					</div>
+				</div>
+			</div>
+		`;
+	}
+
+	function showSuccessScreen(app, data) {
+		app.classList.add('ebm-has-success');
+		app.innerHTML = buildSuccessScreen(data || {});
+
+		const againButton = qs('[data-ebm-book-again]', app);
+
+		if (againButton) {
+			againButton.addEventListener('click', function () {
+				const cleanUrl = window.location.origin + window.location.pathname;
+				window.location.href = cleanUrl;
+			});
+		}
+
+		if (window.history && window.history.replaceState) {
+			const url = new URL(window.location.href);
+			url.searchParams.delete('payment');
+			url.searchParams.delete('ebm_booking');
+			window.history.replaceState({}, document.title, url.toString());
+		}
+	}
+
+	function handleReturnState(app) {
+		const params = new URLSearchParams(window.location.search);
+		const payment = params.get('payment');
+
+		if ('success' === payment) {
+			showSuccessScreen(app, {
+				title: i18n('booking_success', 'Booking successful'),
+				text: i18n('payment_success_text', 'Your payment was successful and your booking is confirmed.'),
+			});
+
+			return true;
+		}
+
+		if ('cancelled' === payment) {
+			setMessage(app, 'Payment was cancelled. Your booking has not been confirmed.', 'error');
+
+			if (window.history && window.history.replaceState) {
+				const url = new URL(window.location.href);
+				url.searchParams.delete('payment');
+				url.searchParams.delete('ebm_booking');
+				window.history.replaceState({}, document.title, url.toString());
+			}
+		}
+
+		return false;
 	}
 
 	function durationLabel(minutes) {
@@ -868,7 +1013,13 @@
 				return;
 			}
 
-			setMessage(app, response.message || 'Booking created successfully.', 'success');
+			showSuccessScreen(app, {
+				title: i18n('booking_success', 'Booking successful'),
+				text: response.message || i18n('booking_success_text', 'Your booking has been received successfully.'),
+				date: state.date,
+				time: state.time,
+				reference: response.booking_id || '',
+			});
 		} catch (error) {
 			setMessage(app, error.message, 'error');
 		}
@@ -1096,6 +1247,10 @@
 	function buildFreshApp(app) {
 		const state = createInitialState();
 		appStates.set(app, state);
+
+		if (handleReturnState(app)) {
+			return;
+		}
 
 		app.innerHTML = '';
 
