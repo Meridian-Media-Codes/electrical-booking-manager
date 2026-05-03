@@ -55,8 +55,8 @@ final class EBM_Shortcodes {
 	}
 
 	private static function enqueue_frontend_assets() {
-		$settings        = EBM_Settings::all();
-		$places_api_key  = sanitize_text_field( $settings['google_places_api_key'] ?? '' );
+		$settings         = EBM_Settings::all();
+		$places_api_key   = sanitize_text_field( $settings['google_places_api_key'] ?? '' );
 		$allowed_prefixes = class_exists( 'EBM_Settings' ) && method_exists( 'EBM_Settings', 'allowed_postcode_prefixes' )
 			? EBM_Settings::allowed_postcode_prefixes()
 			: array( 'FY' );
@@ -98,6 +98,7 @@ final class EBM_Shortcodes {
 						'libraries' => 'places',
 						'callback'  => 'ebmGooglePlacesLoaded',
 						'loading'   => 'async',
+						'v'         => 'weekly',
 					),
 					'https://maps.googleapis.com/maps/api/js'
 				),

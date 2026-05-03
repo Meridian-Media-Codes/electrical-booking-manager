@@ -642,24 +642,24 @@
 		}
 	}
 
-	function extractPlaceComponent(place, type) {
-		const components = place && Array.isArray(place.address_components) ? place.address_components : [];
+	function findAddressComponent(components, type) {
+		if (!Array.isArray(components)) {
+			return null;
+		}
 
-		const match = components.find(function (component) {
+		return components.find(function (component) {
 			return Array.isArray(component.types) && component.types.includes(type);
-		});
-
-		return match ? match.long_name : '';
+		}) || null;
 	}
 
-	function extractPlaceComponentShort(place, type) {
-		const components = place && Array.isArray(place.address_components) ? place.address_components : [];
+	function componentLong(components, type) {
+		const component = findAddressComponent(components, type);
+		return component ? component.longText || component.long_name || '' : '';
+	}
 
-		const match = components.find(function (component) {
-			return Array.isArray(component.types) && component.types.includes(type);
-		});
-
-		return match ? match.short_name : '';
+	function componentShort(components, type) {
+		const component = findAddressComponent(components, type);
+		return component ? component.shortText || component.short_name || component.longText || component.long_name || '' : '';
 	}
 
 	function showAddressMessage(app, message, type) {
@@ -704,15 +704,15 @@
 		preview.innerHTML = `<strong>Service address preview</strong><span>${escapeHtml(parts.join(', '))}</span>`;
 	}
 
-	function fillAddressFromPlace(app, state, place) {
-		const streetNumber = extractPlaceComponent(place, 'street_number');
-		const route = extractPlaceComponent(place, 'route');
-		const premise = extractPlaceComponent(place, 'premise');
-		const subpremise = extractPlaceComponent(place, 'subpremise');
-		const postalTown = extractPlaceComponent(place, 'postal_town');
-		const locality = extractPlaceComponent(place, 'locality');
-		const county = extractPlaceComponent(place, 'administrative_area_level_2') || extractPlaceComponent(place, 'administrative_area_level_1');
-		const postcode = extractPlaceComponentShort(place, 'postal_code') || extractPlaceComponent(place, 'postal_code');
+	function fillAddressFromComponents(app, state, components) {
+		const streetNumber = componentLong(components, 'street_number');
+		const route = componentLong(components, 'route');
+		const premise = componentLong(components, 'premise');
+		const subpremise = componentLong(components, 'subpremise');
+		const postalTown = componentLong(components, 'postal_town');
+		const locality = componentLong(components, 'locality');
+		const county = componentLong(components, 'administrative_area_level_2') || componentLong(components, 'administrative_area_level_1');
+		const postcode = componentShort(components, 'postal_code') || componentLong(components, 'postal_code');
 
 		const line1Value = [subpremise, premise || streetNumber].filter(Boolean).join(', ');
 		const townValue = postalTown || locality;
@@ -725,22 +725,27 @@
 
 		if (line1) {
 			line1.value = line1Value || streetNumber || premise || '';
+			dispatchChange(line1);
 		}
 
 		if (line2) {
 			line2.value = route || '';
+			dispatchChange(line2);
 		}
 
 		if (town) {
 			town.value = townValue || '';
+			dispatchChange(town);
 		}
 
 		if (countyInput) {
 			countyInput.value = county || '';
+			dispatchChange(countyInput);
 		}
 
 		if (postcodeInput) {
 			postcodeInput.value = postcode || '';
+			dispatchChange(postcodeInput);
 		}
 
 		state.addressSelectedFromGoogle = true;
@@ -759,41 +764,84 @@
 		showAddressMessage(app, 'Address accepted. Please check the details before continuing.', 'success');
 	}
 
-	function initAddressAutocomplete(app, state) {
+	async function initAddressAutocomplete(app, state) {
 		if (state.addressAutocompleteReady) {
 			return;
 		}
 
-		const input = qs('[data-ebm-address-search]', app);
+		const mount = qs('[data-ebm-place-autocomplete-mount]', app);
 
-		if (!input) {
+		if (!mount) {
 			return;
 		}
 
-		if (!window.google || !window.google.maps || !window.google.maps.places) {
+		if (!window.google || !window.google.maps || !window.google.maps.importLibrary) {
 			return;
 		}
 
 		state.addressAutocompleteReady = true;
+		mount.innerHTML = '';
 
-		const autocomplete = new window.google.maps.places.Autocomplete(input, {
-			componentRestrictions: {
-				country: 'gb',
-			},
-			fields: ['address_components', 'formatted_address', 'geometry', 'name'],
-			types: ['address'],
-		});
+		try {
+			const placesLibrary = await window.google.maps.importLibrary('places');
+			const PlaceAutocompleteElement = placesLibrary.PlaceAutocompleteElement || window.google.maps.places.PlaceAutocompleteElement;
 
-		autocomplete.addListener('place_changed', function () {
-			const place = autocomplete.getPlace();
-
-			if (!place || !place.address_components) {
-				showAddressMessage(app, 'Please choose an address from the list.', 'error');
+			if (!PlaceAutocompleteElement) {
+				state.addressAutocompleteReady = false;
+				showAddressMessage(app, 'Google address search could not load. Please enter the address manually.', 'error');
 				return;
 			}
 
-			fillAddressFromPlace(app, state, place);
-		});
+			const autocomplete = new PlaceAutocompleteElement({});
+
+			autocomplete.setAttribute('aria-label', 'Address search');
+			autocomplete.setAttribute('placeholder', 'Start typing the service address');
+
+			if ('includedRegionCodes' in autocomplete) {
+				autocomplete.includedRegionCodes = ['gb'];
+			}
+
+			if ('requestedLanguage' in autocomplete) {
+				autocomplete.requestedLanguage = 'en-GB';
+			}
+
+			if ('locationBias' in autocomplete) {
+				autocomplete.locationBias = {
+					center: {
+						lat: 53.8175,
+						lng: -3.0357,
+					},
+					radius: 30000,
+				};
+			}
+
+			mount.appendChild(autocomplete);
+
+			autocomplete.addEventListener('gmp-select', async function (event) {
+				const prediction = event.placePrediction;
+
+				if (!prediction || !prediction.toPlace) {
+					showAddressMessage(app, 'Please choose an address from the list.', 'error');
+					return;
+				}
+
+				const place = prediction.toPlace();
+
+				try {
+					await place.fetchFields({
+						fields: ['addressComponents', 'formattedAddress', 'displayName'],
+					});
+
+					const components = place.addressComponents || [];
+					fillAddressFromComponents(app, state, components);
+				} catch (error) {
+					showAddressMessage(app, 'The selected address could not be loaded. Please enter it manually.', 'error');
+				}
+			});
+		} catch (error) {
+			state.addressAutocompleteReady = false;
+			showAddressMessage(app, 'Google address search could not load. Please enter the address manually.', 'error');
+		}
 	}
 
 	async function submitBooking(app, state) {
@@ -1123,7 +1171,7 @@
 
 				<div class="ebm-field-full ebm-address-helper">
 					<label>Address search</label>
-					<input type="text" name="address_search" data-ebm-address-search placeholder="Start typing the service address">
+					<div class="ebm-place-autocomplete-mount" data-ebm-place-autocomplete-mount></div>
 					<div class="ebm-address-message" data-ebm-address-message></div>
 					<p class="ebm-address-hint">Choose an address from the list. We only accept bookings for ${escapeHtml(allowedPostcodeLabel())} postcodes.</p>
 				</div>
