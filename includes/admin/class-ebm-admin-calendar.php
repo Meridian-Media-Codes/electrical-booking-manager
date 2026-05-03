@@ -17,6 +17,18 @@ final class EBM_Admin_Calendar {
 		return md5( $title . '|' . gmdate( 'Y-m-d H:i', $time ) );
 	}
 
+	private static function add_event( &$events_by_day, $day_key, $event ) {
+		if ( empty( $day_key ) ) {
+			return;
+		}
+
+		if ( ! isset( $events_by_day[ $day_key ] ) ) {
+			$events_by_day[ $day_key ] = array();
+		}
+
+		$events_by_day[ $day_key ][] = $event;
+	}
+
 	public static function render() {
 		EBM_Admin::cap();
 
@@ -42,45 +54,149 @@ final class EBM_Admin_Calendar {
 		$db_start = $start_of_calendar->format( 'Y-m-d H:i:s' );
 		$db_end   = $end_of_calendar->format( 'Y-m-d H:i:s' );
 
-		$bookings_table  = EBM_Helpers::table( 'bookings' );
-		$jobs_table      = EBM_Helpers::table( 'jobs' );
-		$customers_table = EBM_Helpers::table( 'customers' );
+		$bookings_table     = EBM_Helpers::table( 'bookings' );
+		$booking_days_table = EBM_Helpers::table( 'booking_days' );
+		$jobs_table         = EBM_Helpers::table( 'jobs' );
+		$customers_table    = EBM_Helpers::table( 'customers' );
 
+		/*
+		 * Main query:
+		 * - Prefer rows from booking_days, because those represent the actual occupied work days.
+		 * - Fall back to bookings.start_at/end_at for old bookings that may not have booking_days rows.
+		 */
 		$bookings = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT b.*, j.title AS job_title, c.name AS customer_name
+				"SELECT
+					b.*,
+					j.title AS job_title,
+					c.name AS customer_name,
+					bd.id AS booking_day_id,
+					bd.work_date AS work_date,
+					bd.start_at AS day_start_at,
+					bd.end_at AS day_end_at
 				FROM $bookings_table b
 				INNER JOIN $jobs_table j ON j.id = b.job_id
 				INNER JOIN $customers_table c ON c.id = b.customer_id
-				WHERE b.start_at <= %s
-				AND b.end_at >= %s
-				ORDER BY b.start_at ASC",
+				LEFT JOIN $booking_days_table bd
+					ON bd.booking_id = b.id
+					AND bd.start_at <= %s
+					AND bd.end_at >= %s
+				WHERE
+					(
+						bd.id IS NOT NULL
+						OR (
+							b.start_at <= %s
+							AND b.end_at >= %s
+						)
+					)
+				ORDER BY COALESCE( bd.start_at, b.start_at ) ASC",
+				$db_end,
+				$db_start,
 				$db_end,
 				$db_start
 			)
 		);
 
-		$events_by_day       = array();
-		$plugin_google_ids   = array();
-		$plugin_fingerprints = array();
+		/*
+		 * Count total booking day rows for each booking, so we can label larger jobs as Day 1/2 etc.
+		 */
+		$booking_ids = array();
 
 		foreach ( $bookings as $booking ) {
-			$day_key = mysql2date( 'Y-m-d', $booking->start_at, false );
-			$title   = $booking->job_title;
+			$booking_ids[] = absint( $booking->id );
+		}
+
+		$booking_ids = array_values( array_unique( array_filter( $booking_ids ) ) );
+
+		$day_counts = array();
+
+		if ( ! empty( $booking_ids ) ) {
+			$placeholders = implode( ',', array_fill( 0, count( $booking_ids ), '%d' ) );
+
+			$count_rows = $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT booking_id, COUNT(*) AS day_count
+					FROM $booking_days_table
+					WHERE booking_id IN ($placeholders)
+					GROUP BY booking_id",
+					$booking_ids
+				)
+			);
+
+			foreach ( $count_rows as $count_row ) {
+				$day_counts[ absint( $count_row->booking_id ) ] = absint( $count_row->day_count );
+			}
+		}
+
+		$day_indexes          = array();
+		$events_by_day        = array();
+		$plugin_google_ids    = array();
+		$plugin_fingerprints  = array();
+		$rendered_fallbacks   = array();
+
+		foreach ( $bookings as $booking ) {
+			$booking_id = absint( $booking->id );
+
+			$has_booking_day = ! empty( $booking->booking_day_id );
+			$event_start     = $has_booking_day ? $booking->day_start_at : $booking->start_at;
+			$event_end       = $has_booking_day ? $booking->day_end_at : $booking->end_at;
+			$work_date       = $has_booking_day ? $booking->work_date : mysql2date( 'Y-m-d', $booking->start_at, false );
+
+			/*
+			 * If a booking has booking_days rows, do not also render the fallback booking row.
+			 */
+			if ( ! $has_booking_day && ! empty( $day_counts[ $booking_id ] ) ) {
+				continue;
+			}
+
+			/*
+			 * Avoid duplicated fallback rows if an old booking spans the month range.
+			 */
+			$fallback_key = $booking_id . '|' . $work_date . '|' . $event_start;
+
+			if ( ! $has_booking_day && isset( $rendered_fallbacks[ $fallback_key ] ) ) {
+				continue;
+			}
+
+			$rendered_fallbacks[ $fallback_key ] = true;
 
 			if ( ! empty( $booking->google_event_id ) ) {
 				$plugin_google_ids[] = (string) $booking->google_event_id;
 			}
 
-			$plugin_fingerprints[] = self::event_fingerprint( 'Booking: ' . $booking->job_title, $booking->start_at );
+			$plugin_fingerprints[] = self::event_fingerprint( 'Booking: ' . $booking->job_title, $event_start );
 
-			$events_by_day[ $day_key ][] = array(
-				'type'     => 'booking',
-				'status'   => sanitize_html_class( $booking->status ),
-				'time'     => mysql2date( 'H:i', $booking->start_at, false ),
-				'title'    => $title,
-				'customer' => $booking->customer_name,
-				'url'      => admin_url( 'admin.php?page=ebm-bookings&booking_id=' . absint( $booking->id ) ),
+			$total_days = absint( $day_counts[ $booking_id ] ?? 0 );
+			$title      = $booking->job_title;
+
+			if ( $total_days > 1 ) {
+				if ( ! isset( $day_indexes[ $booking_id ] ) ) {
+					$day_indexes[ $booking_id ] = 0;
+				}
+
+				$day_indexes[ $booking_id ]++;
+
+				$title = sprintf(
+					/* translators: 1: job title, 2: current day, 3: total days */
+					__( '%1$s (Day %2$d/%3$d)', 'electrical-booking-manager' ),
+					$booking->job_title,
+					$day_indexes[ $booking_id ],
+					$total_days
+				);
+			}
+
+			self::add_event(
+				$events_by_day,
+				$work_date,
+				array(
+					'type'     => 'booking',
+					'status'   => sanitize_html_class( $booking->status ),
+					'time'     => mysql2date( 'H:i', $event_start, false ),
+					'title'    => $title,
+					'customer' => $booking->customer_name,
+					'url'      => admin_url( 'admin.php?page=ebm-bookings&booking_id=' . $booking_id ),
+					'end_at'   => $event_end,
+				)
 			);
 		}
 
@@ -120,13 +236,18 @@ final class EBM_Admin_Calendar {
 
 					$day_key = wp_date( 'Y-m-d', $timestamp, $timezone );
 
-					$events_by_day[ $day_key ][] = array(
-						'type'     => 'google',
-						'status'   => 'google',
-						'time'     => wp_date( 'H:i', $timestamp, $timezone ),
-						'title'    => $title,
-						'customer' => __( 'Google Calendar', 'electrical-booking-manager' ),
-						'url'      => '',
+					self::add_event(
+						$events_by_day,
+						$day_key,
+						array(
+							'type'     => 'google',
+							'status'   => 'google',
+							'time'     => wp_date( 'H:i', $timestamp, $timezone ),
+							'title'    => $title,
+							'customer' => __( 'Google Calendar', 'electrical-booking-manager' ),
+							'url'      => '',
+							'end_at'   => $event['end'] ?? '',
+						)
 					);
 				}
 			}

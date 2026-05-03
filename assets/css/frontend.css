@@ -1068,3 +1068,51 @@
 		gap: 4px;
 	}
 }
+
+/* Fix front-end date picker stacking over the page/footer */
+.ebm-booking-form,
+.ebm-booking-form .ebm-booking-shell,
+.ebm-booking-form .ebm-step-screen.is-active,
+.ebm-booking-form .ebm-date-wrap {
+	position: relative !important;
+	z-index: 99999 !important;
+	overflow: visible !important;
+}
+
+.ebm-booking-form .ebm-calendar-popover {
+	position: absolute !important;
+	z-index: 9999999 !important;
+	pointer-events: auto !important;
+	background: #ffffff !important;
+}
+
+.ebm-booking-form .ebm-cal-days,
+.ebm-booking-form .ebm-cal-weekdays {
+	position: relative !important;
+	z-index: 9999999 !important;
+	pointer-events: auto !important;
+}
+
+.ebm-booking-form .ebm-cal-day,
+.ebm-booking-form .ebm-cal-nav button,
+.ebm-booking-form .ebm-date-trigger {
+	pointer-events: auto !important;
+	cursor: pointer !important;
+}
+
+/* Keep the date picker above nearby footer/content sections */
+body:has(.ebm-calendar-popover.is-open) .site-footer,
+body:has(.ebm-calendar-popover.is-open) footer,
+body:has(.ebm-calendar-popover.is-open) .wp-site-blocks > footer {
+	position: relative;
+	z-index: 1;
+}
+
+body:has(.ebm-calendar-popover.is-open) .ebm-booking-form {
+	z-index: 999999 !important;
+}
+
+/* Fallback for browsers without :has support */
+.ebm-calendar-popover.is-open {
+	isolation: isolate !important;
+}
