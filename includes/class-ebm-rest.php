@@ -495,35 +495,67 @@ final class EBM_REST {
 		return $response;
 	}
 
-	public static function quote( WP_REST_Request $request ) {
-		global $wpdb;
+public static function quote( WP_REST_Request $request ) {
+	global $wpdb;
 
-		$job_id = absint( $request->get_param( 'job_id' ) );
+	$job_id = absint( $request->get_param( 'job_id' ) );
 
-		$job = $wpdb->get_row(
-			$wpdb->prepare(
-				'SELECT * FROM ' . EBM_Helpers::table( 'jobs' ) . ' WHERE id = %d AND is_active = 1',
-				$job_id
-			)
+	$job = $wpdb->get_row(
+		$wpdb->prepare(
+			'SELECT * FROM ' . EBM_Helpers::table( 'jobs' ) . ' WHERE id = %d AND is_active = 1',
+			$job_id
+		)
+	);
+
+	if ( ! $job ) {
+		return new WP_REST_Response(
+			array( 'message' => __( 'Invalid job.', 'electrical-booking-manager' ) ),
+			400
 		);
+	}
 
-		if ( ! $job ) {
+	$addons = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
+
+	$original_total = EBM_Scheduler::price( $job_id, $addons );
+	$total          = $original_total;
+
+	$voucher_code    = class_exists( 'EBM_Discounts' ) ? EBM_Discounts::normalise_code( $request->get_param( 'voucher_code' ) ?? '' ) : '';
+	$discount_id     = 0;
+	$discount_amount = 0;
+
+	if ( '' !== $voucher_code && class_exists( 'EBM_Discounts' ) ) {
+		$discount_result = EBM_Discounts::validate( $voucher_code, $job_id, $total );
+
+		if ( is_wp_error( $discount_result ) ) {
 			return new WP_REST_Response(
-				array( 'message' => __( 'Invalid job.', 'electrical-booking-manager' ) ),
+				array(
+					'message' => $discount_result->get_error_message(),
+				),
 				400
 			);
 		}
 
-		$addons  = EBM_Helpers::clean_addons( $request->get_param( 'addons' ) );
-		$total   = EBM_Scheduler::price( $job_id, $addons );
-		$deposit = EBM_Scheduler::deposit( $job, $total );
-
-		return array(
-			'total'   => $total,
-			'deposit' => $deposit,
-			'balance' => round( $total - $deposit, 2 ),
-		);
+		$discount_id     = absint( $discount_result['id'] ?? 0 );
+		$discount_amount = (float) ( $discount_result['discount_amount'] ?? 0 );
+		$total           = max( 0, round( $total - $discount_amount, 2 ) );
 	}
+
+	$deposit = EBM_Scheduler::deposit( $job, $total );
+	$balance = round( $total - $deposit, 2 );
+
+	return array(
+		'original_total'  => round( $original_total, 2 ),
+		'total'           => round( $total, 2 ),
+		'total_amount'    => round( $total, 2 ),
+		'deposit'         => round( $deposit, 2 ),
+		'deposit_amount'  => round( $deposit, 2 ),
+		'balance'         => $balance,
+		'balance_amount'  => $balance,
+		'voucher_code'    => $voucher_code,
+		'discount_id'     => $discount_id,
+		'discount_amount' => round( $discount_amount, 2 ),
+	);
+}
 
 	public static function book( WP_REST_Request $request ) {
 		if ( EBM_DB::rate_limited( 'book' ) ) {
@@ -608,7 +640,30 @@ final class EBM_REST {
 			);
 		}
 
-		$total   = EBM_Scheduler::price( $job_id, $addons );
+		$original_total = EBM_Scheduler::price( $job_id, $addons );
+		$total          = $original_total;
+
+		$voucher_code    = class_exists( 'EBM_Discounts' ) ? EBM_Discounts::normalise_code( $request->get_param( 'voucher_code' ) ?? '' ) : '';
+		$discount_id     = 0;
+		$discount_amount = 0;
+
+		if ( '' !== $voucher_code && class_exists( 'EBM_Discounts' ) ) {
+			$discount_result = EBM_Discounts::validate( $voucher_code, $job_id, $total );
+
+			if ( is_wp_error( $discount_result ) ) {
+				return new WP_REST_Response(
+					array(
+						'message' => $discount_result->get_error_message(),
+					),
+					400
+				);
+			}
+
+			$discount_id     = absint( $discount_result['id'] ?? 0 );
+			$discount_amount = (float) ( $discount_result['discount_amount'] ?? 0 );
+			$total           = max( 0, round( $total - $discount_amount, 2 ) );
+		}
+
 		$deposit = EBM_Scheduler::deposit( $job, $total );
 		$now     = current_time( 'mysql' );
 
