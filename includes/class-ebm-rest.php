@@ -671,6 +671,10 @@ final class EBM_REST {
 				EBM_Google::create_event( $booking_id );
 			}
 
+			if ( class_exists( 'EBM_Emails' ) ) {
+				EBM_Emails::confirmation( $booking_id );
+			}
+
 			return array(
 				'booking_id'       => $booking_id,
 				'checkout_url'     => '',

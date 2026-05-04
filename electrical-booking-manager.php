@@ -73,6 +73,7 @@ add_action(
 add_action( 'init', array( 'EBM_Admin', 'init' ) );
 add_action( 'init', array( 'EBM_Shortcodes', 'init' ) );
 add_action( 'init', array( 'EBM_Google', 'init' ) );
+add_action( 'init', array( 'EBM_Emails', 'init' ) );
 
 add_action( 'rest_api_init', array( 'EBM_REST', 'routes' ) );
 add_action( 'rest_api_init', array( 'EBM_Stripe', 'routes' ) );
