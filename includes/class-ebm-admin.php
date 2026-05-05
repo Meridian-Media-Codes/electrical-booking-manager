@@ -73,8 +73,8 @@ final class EBM_Admin {
 
 		add_submenu_page(
 			'ebm-bookings',
-			__( 'Jobs & Add-ons', 'electrical-booking-manager' ),
-			__( 'Jobs & Add-ons', 'electrical-booking-manager' ),
+			__( 'Services', 'electrical-booking-manager' ),
+			__( 'Services', 'electrical-booking-manager' ),
 			'manage_options',
 			'ebm-jobs',
 			array( 'EBM_Admin_Jobs', 'render' )
