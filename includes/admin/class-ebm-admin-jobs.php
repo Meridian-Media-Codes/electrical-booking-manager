@@ -5,12 +5,17 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 final class EBM_Admin_Jobs {
 	public static function init() {
+		add_action( 'admin_init', array( __CLASS__, 'maybe_add_sort_order_columns' ) );
+
 		add_action( 'admin_post_ebm_save_job', array( __CLASS__, 'save_job' ) );
 		add_action( 'admin_post_ebm_delete_job', array( __CLASS__, 'hide_job' ) );
 		add_action( 'admin_post_ebm_hard_delete_job', array( __CLASS__, 'delete_job' ) );
 		add_action( 'admin_post_ebm_save_addon', array( __CLASS__, 'save_addon' ) );
 		add_action( 'admin_post_ebm_delete_addon', array( __CLASS__, 'hide_addon' ) );
 		add_action( 'admin_post_ebm_hard_delete_addon', array( __CLASS__, 'delete_addon' ) );
+
+		add_action( 'wp_ajax_ebm_reorder_jobs', array( __CLASS__, 'reorder_jobs' ) );
+		add_action( 'wp_ajax_ebm_reorder_addons', array( __CLASS__, 'reorder_addons' ) );
 	}
 
 	public static function render() {
@@ -21,7 +26,7 @@ final class EBM_Admin_Jobs {
 		$jobs_table   = EBM_Helpers::table( 'jobs' );
 		$addons_table = EBM_Helpers::table( 'addons' );
 
-		$jobs = $wpdb->get_results( "SELECT * FROM $jobs_table ORDER BY is_active DESC, title ASC" );
+		$jobs = $wpdb->get_results( "SELECT * FROM $jobs_table ORDER BY sort_order ASC, is_active DESC, title ASC" );
 
 		$is_new_request  = isset( $_GET['job_id'] ) && '0' === (string) $_GET['job_id'];
 		$selected_job_id = isset( $_GET['job_id'] ) ? absint( $_GET['job_id'] ) : 0;
@@ -46,7 +51,7 @@ final class EBM_Admin_Jobs {
 		if ( $selected_job ) {
 			$addons = $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT * FROM $addons_table WHERE job_id = %d ORDER BY is_active DESC, title ASC",
+					"SELECT * FROM $addons_table WHERE job_id = %d ORDER BY sort_order ASC, is_active DESC, title ASC",
 					$selected_job_id
 				)
 			);
@@ -72,7 +77,7 @@ final class EBM_Admin_Jobs {
 							</a>
 						</p>
 
-						<div class="ebm-job-list">
+						<div class="ebm-job-list ebm-sortable-services" data-ebm-sortable-services data-nonce="<?php echo esc_attr( wp_create_nonce( 'ebm_reorder_jobs' ) ); ?>">
 							<?php if ( empty( $jobs ) ) : ?>
 								<div class="ebm-muted-box">
 									<?php esc_html_e( 'No services have been created yet.', 'electrical-booking-manager' ); ?>
@@ -91,9 +96,10 @@ final class EBM_Admin_Jobs {
 								);
 								?>
 
-								<a class="ebm-job-card <?php echo $is_selected ? 'is-selected' : ''; ?>" href="<?php echo esc_url( $card_url ); ?>">
+								<a class="ebm-job-card <?php echo $is_selected ? 'is-selected' : ''; ?>" href="<?php echo esc_url( $card_url ); ?>" data-job-id="<?php echo esc_attr( $job->id ); ?>" draggable="true">
 									<span class="ebm-job-card-title">
-										<span><?php echo esc_html( $job->title ); ?></span>
+										<span class="ebm-drag-handle" title="<?php esc_attr_e( 'Drag to reorder', 'electrical-booking-manager' ); ?>">⋮⋮</span>
+										<span class="ebm-job-card-name"><?php echo esc_html( $job->title ); ?></span>
 										<span class="ebm-badge <?php echo (int) $job->is_active ? 'green' : 'grey'; ?>">
 											<?php echo (int) $job->is_active ? esc_html__( 'Active', 'electrical-booking-manager' ) : esc_html__( 'Hidden', 'electrical-booking-manager' ); ?>
 										</span>
@@ -124,6 +130,8 @@ final class EBM_Admin_Jobs {
 					<?php self::addons_panel( $selected_job, $addons ); ?>
 				</div>
 			</div>
+
+			<?php self::render_sorting_script(); ?>
 		</div>
 		<?php
 	}
@@ -249,7 +257,7 @@ final class EBM_Admin_Jobs {
 			</div>
 
 			<div class="ebm-panel-body">
-				<div class="ebm-extra-list">
+				<div class="ebm-extra-list ebm-sortable-extras" data-ebm-sortable-extras data-job-id="<?php echo esc_attr( $job_id ); ?>" data-nonce="<?php echo esc_attr( wp_create_nonce( 'ebm_reorder_addons_' . $job_id ) ); ?>">
 					<?php if ( empty( $addons ) ) : ?>
 						<div class="ebm-muted-box">
 							<?php esc_html_e( 'No extras yet. Add the first one below.', 'electrical-booking-manager' ); ?>
@@ -278,7 +286,7 @@ final class EBM_Admin_Jobs {
 		$button_label    = $is_new ? __( 'Add extra', 'electrical-booking-manager' ) : __( 'Save extra', 'electrical-booking-manager' );
 		$button_priority = $is_new ? 'primary' : 'secondary';
 		?>
-		<form class="<?php echo esc_attr( $form_class ); ?>" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
+		<form class="<?php echo esc_attr( $form_class ); ?>" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" <?php echo $is_new ? '' : 'data-addon-id="' . esc_attr( $addon_id ) . '" draggable="true"'; ?>>
 			<input type="hidden" name="action" value="ebm_save_addon">
 			<input type="hidden" name="id" value="<?php echo esc_attr( $addon_id ); ?>">
 			<input type="hidden" name="job_id" value="<?php echo esc_attr( $job_id ); ?>">
@@ -288,7 +296,11 @@ final class EBM_Admin_Jobs {
 			<?php if ( ! $is_new ) : ?>
 				<div class="ebm-extra-top">
 					<div>
-						<strong><?php echo esc_html( $addon->title ); ?></strong>
+						<strong>
+							<span class="ebm-drag-handle" title="<?php esc_attr_e( 'Drag to reorder', 'electrical-booking-manager' ); ?>">⋮⋮</span>
+							<?php echo esc_html( $addon->title ); ?>
+						</strong>
+
 						<div class="ebm-extra-meta">
 							<?php echo esc_html( EBM_Helpers::money( $addon->price ) ); ?>
 							·
@@ -375,6 +387,345 @@ final class EBM_Admin_Jobs {
 		<?php
 	}
 
+	public static function maybe_add_sort_order_columns() {
+		global $wpdb;
+
+		self::maybe_add_sort_order_column(
+			EBM_Helpers::table( 'jobs' ),
+			"SELECT id FROM " . EBM_Helpers::table( 'jobs' ) . " ORDER BY title ASC"
+		);
+
+		self::maybe_add_sort_order_column(
+			EBM_Helpers::table( 'addons' ),
+			"SELECT id FROM " . EBM_Helpers::table( 'addons' ) . " ORDER BY job_id ASC, title ASC"
+		);
+	}
+
+	private static function maybe_add_sort_order_column( $table, $select_sql ) {
+		global $wpdb;
+
+		$column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SHOW COLUMNS FROM $table LIKE %s",
+				'sort_order'
+			)
+		);
+
+		if ( $column ) {
+			return;
+		}
+
+		$wpdb->query( "ALTER TABLE $table ADD sort_order INT UNSIGNED NOT NULL DEFAULT 0 AFTER id" );
+
+		$rows  = $wpdb->get_results( $select_sql );
+		$order = 10;
+
+		foreach ( (array) $rows as $row ) {
+			$wpdb->update(
+				$table,
+				array( 'sort_order' => $order ),
+				array( 'id' => absint( $row->id ) ),
+				array( '%d' ),
+				array( '%d' )
+			);
+
+			$order += 10;
+		}
+	}
+
+	public static function reorder_jobs() {
+		EBM_Admin::cap();
+
+		check_ajax_referer( 'ebm_reorder_jobs', 'nonce' );
+
+		$order = isset( $_POST['order'] ) && is_array( $_POST['order'] )
+			? array_map( 'absint', wp_unslash( $_POST['order'] ) )
+			: array();
+
+		if ( empty( $order ) ) {
+			wp_send_json_error(
+				array( 'message' => __( 'No services were sent to reorder.', 'electrical-booking-manager' ) ),
+				400
+			);
+		}
+
+		self::save_sort_order( EBM_Helpers::table( 'jobs' ), $order );
+
+		wp_send_json_success(
+			array( 'message' => __( 'Service order saved.', 'electrical-booking-manager' ) )
+		);
+	}
+
+	public static function reorder_addons() {
+		EBM_Admin::cap();
+
+		$job_id = absint( $_POST['job_id'] ?? 0 );
+
+		check_ajax_referer( 'ebm_reorder_addons_' . $job_id, 'nonce' );
+
+		$order = isset( $_POST['order'] ) && is_array( $_POST['order'] )
+			? array_map( 'absint', wp_unslash( $_POST['order'] ) )
+			: array();
+
+		if ( ! $job_id || empty( $order ) ) {
+			wp_send_json_error(
+				array( 'message' => __( 'No extras were sent to reorder.', 'electrical-booking-manager' ) ),
+				400
+			);
+		}
+
+		global $wpdb;
+
+		$table    = EBM_Helpers::table( 'addons' );
+		$position = 10;
+
+		foreach ( $order as $addon_id ) {
+			if ( ! $addon_id ) {
+				continue;
+			}
+
+			$wpdb->update(
+				$table,
+				array(
+					'sort_order' => $position,
+					'updated_at'  => current_time( 'mysql' ),
+				),
+				array(
+					'id'     => $addon_id,
+					'job_id' => $job_id,
+				),
+				array( '%d', '%s' ),
+				array( '%d', '%d' )
+			);
+
+			$position += 10;
+		}
+
+		wp_send_json_success(
+			array( 'message' => __( 'Extra order saved.', 'electrical-booking-manager' ) )
+		);
+	}
+
+	private static function save_sort_order( $table, $order ) {
+		global $wpdb;
+
+		$position = 10;
+
+		foreach ( $order as $item_id ) {
+			if ( ! $item_id ) {
+				continue;
+			}
+
+			$wpdb->update(
+				$table,
+				array(
+					'sort_order' => $position,
+					'updated_at'  => current_time( 'mysql' ),
+				),
+				array( 'id' => $item_id ),
+				array( '%d', '%s' ),
+				array( '%d' )
+			);
+
+			$position += 10;
+		}
+	}
+
+	private static function next_sort_order( $table, $where = '' ) {
+		global $wpdb;
+
+		$sql = "SELECT MAX(sort_order) FROM $table";
+
+		if ( $where ) {
+			$sql .= ' WHERE ' . $where;
+		}
+
+		$max = (int) $wpdb->get_var( $sql );
+
+		return $max + 10;
+	}
+
+	private static function render_sorting_script() {
+		?>
+		<script>
+		(function () {
+			function postOrder(action, nonce, order, jobId) {
+				const data = new FormData();
+
+				data.append('action', action);
+				data.append('nonce', nonce || '');
+
+				if (jobId) {
+					data.append('job_id', jobId);
+				}
+
+				order.forEach(function (id) {
+					data.append('order[]', id);
+				});
+
+				return fetch(ajaxurl, {
+					method: 'POST',
+					credentials: 'same-origin',
+					body: data
+				}).then(function (response) {
+					return response.json();
+				});
+			}
+
+			function getDragAfterElement(container, y, selector) {
+				const items = Array.from(container.querySelectorAll(selector + ':not(.is-dragging)'));
+
+				return items.reduce(function (closest, child) {
+					const box = child.getBoundingClientRect();
+					const offset = y - box.top - box.height / 2;
+
+					if (offset < 0 && offset > closest.offset) {
+						return {
+							offset: offset,
+							element: child
+						};
+					}
+
+					return closest;
+				}, {
+					offset: Number.NEGATIVE_INFINITY,
+					element: null
+				}).element;
+			}
+
+			function makeSortable(config) {
+				const list = document.querySelector(config.listSelector);
+
+				if (!list) {
+					return;
+				}
+
+				let dragged = null;
+				let didDrag = false;
+
+				function saveOrder() {
+					const order = Array.from(list.querySelectorAll(config.itemSelector)).map(function (item) {
+						return item.getAttribute(config.idAttribute);
+					});
+
+					list.classList.add('is-saving-order');
+					list.classList.remove('is-order-saved', 'is-order-error');
+
+					postOrder(
+						config.action,
+						list.getAttribute('data-nonce') || '',
+						order,
+						list.getAttribute('data-job-id') || ''
+					)
+						.then(function (response) {
+							if (!response || !response.success) {
+								throw new Error(response && response.data && response.data.message ? response.data.message : 'Order could not be saved.');
+							}
+
+							list.classList.remove('is-saving-order');
+							list.classList.add('is-order-saved');
+
+							setTimeout(function () {
+								list.classList.remove('is-order-saved');
+							}, 1200);
+						})
+						.catch(function () {
+							list.classList.remove('is-saving-order');
+							list.classList.add('is-order-error');
+
+							setTimeout(function () {
+								list.classList.remove('is-order-error');
+							}, 1600);
+						});
+				}
+
+				list.addEventListener('dragstart', function (event) {
+					const item = event.target.closest(config.itemSelector);
+
+					if (!item) {
+						return;
+					}
+
+					if (
+						event.target.matches('input, textarea, select, button, option') ||
+						event.target.closest('input, textarea, select, button')
+					) {
+						event.preventDefault();
+						return;
+					}
+
+					dragged = item;
+					didDrag = false;
+
+					item.classList.add('is-dragging');
+
+					if (event.dataTransfer) {
+						event.dataTransfer.effectAllowed = 'move';
+						event.dataTransfer.setData('text/plain', item.getAttribute(config.idAttribute));
+					}
+				});
+
+				list.addEventListener('dragover', function (event) {
+					event.preventDefault();
+
+					if (!dragged) {
+						return;
+					}
+
+					didDrag = true;
+
+					const afterElement = getDragAfterElement(list, event.clientY, config.itemSelector);
+
+					if (afterElement == null) {
+						list.appendChild(dragged);
+					} else {
+						list.insertBefore(dragged, afterElement);
+					}
+				});
+
+				list.addEventListener('dragend', function () {
+					if (!dragged) {
+						return;
+					}
+
+					dragged.classList.remove('is-dragging');
+
+					if (didDrag) {
+						saveOrder();
+					}
+
+					setTimeout(function () {
+						dragged = null;
+						didDrag = false;
+					}, 50);
+				});
+
+				list.addEventListener('click', function (event) {
+					if (didDrag) {
+						event.preventDefault();
+						event.stopPropagation();
+					}
+				}, true);
+			}
+
+			makeSortable({
+				listSelector: '[data-ebm-sortable-services]',
+				itemSelector: '[data-job-id]',
+				idAttribute: 'data-job-id',
+				action: 'ebm_reorder_jobs'
+			});
+
+			makeSortable({
+				listSelector: '[data-ebm-sortable-extras]',
+				itemSelector: '[data-addon-id]',
+				idAttribute: 'data-addon-id',
+				action: 'ebm_reorder_addons'
+			});
+		})();
+		</script>
+		<?php
+	}
+
 	public static function save_job() {
 		EBM_Admin::cap();
 		check_admin_referer( 'ebm_save_job' );
@@ -428,12 +779,13 @@ final class EBM_Admin_Jobs {
 
 			$job_id = $id;
 		} else {
+			$data['sort_order'] = self::next_sort_order( EBM_Helpers::table( 'jobs' ) );
 			$data['created_at'] = $now;
 
 			$wpdb->insert(
 				EBM_Helpers::table( 'jobs' ),
 				$data,
-				array( '%s', '%s', '%f', '%d', '%s', '%f', '%d', '%d', '%s', '%s' )
+				array( '%s', '%s', '%f', '%d', '%s', '%f', '%d', '%d', '%s', '%d', '%s' )
 			);
 
 			$job_id = (int) $wpdb->insert_id;
@@ -556,12 +908,16 @@ final class EBM_Admin_Jobs {
 				array( '%d' )
 			);
 		} else {
+			$data['sort_order'] = self::next_sort_order(
+				EBM_Helpers::table( 'addons' ),
+				$wpdb->prepare( 'job_id = %d', $job_id )
+			);
 			$data['created_at'] = $now;
 
 			$wpdb->insert(
 				EBM_Helpers::table( 'addons' ),
 				$data,
-				array( '%d', '%s', '%s', '%f', '%d', '%d', '%d', '%d', '%s', '%s' )
+				array( '%d', '%s', '%s', '%f', '%d', '%d', '%d', '%d', '%s', '%d', '%s' )
 			);
 		}
 

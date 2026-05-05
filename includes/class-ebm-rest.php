@@ -284,7 +284,7 @@ final class EBM_REST {
 				"SELECT id, title, description, duration_minutes, custom_fields
 				FROM $jobs_table
 				WHERE is_active = 1
-				ORDER BY title ASC"
+				ORDER BY sort_order ASC, title ASC"
 			),
 		);
 	}
@@ -314,7 +314,7 @@ final class EBM_REST {
 					FROM $addons_table
 					WHERE job_id = %d
 					AND is_active = 1
-					ORDER BY title ASC",
+					ORDER BY sort_order ASC, title ASC",
 					$job_id
 				)
 			),
