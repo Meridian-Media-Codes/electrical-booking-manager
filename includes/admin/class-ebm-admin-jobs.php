@@ -47,7 +47,7 @@ final class EBM_Admin_Jobs {
 		$new_job_url = admin_url( 'admin.php?page=ebm-jobs&job_id=0' );
 		?>
 		<div class="wrap ebm-admin-shell">
-			<h1><?php esc_html_e( 'Jobs & Extras', 'electrical-booking-manager' ); ?></h1>
+			<h1><?php esc_html_e( 'Services', 'electrical-booking-manager' ); ?></h1>
 			<?php EBM_Admin_Notices::render(); ?>
 
 			<div class="ebm-admin-layout">
