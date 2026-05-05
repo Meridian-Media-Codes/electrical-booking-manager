@@ -118,6 +118,10 @@
 	}
 
 	function formatDisplayDate(value) {
+		if (!value) {
+			return '';
+		}
+
 		const iso = ukToIso(value);
 		const date = new Date(`${iso}T00:00:00`);
 
@@ -382,6 +386,7 @@
 			api('jobs')
 				.then(function (response) {
 					const jobs = Array.isArray(response) ? response : (response.jobs || []);
+
 					if (jobs.length) {
 						cache.jobs = jobs;
 					}
@@ -1062,13 +1067,40 @@
 			</div>
 		` : '';
 
-		const meta = `
+		const rows = [];
+
+		if (data.loading) {
+			rows.push(['Booking details', 'Loading details...']);
+		}
+
+		if (data.job) {
+			rows.push(['Job', data.job]);
+		}
+
+		if (data.date) {
+			rows.push(['Date', formatDisplayDate(data.date)]);
+		}
+
+		if (data.time) {
+			rows.push(['Time', data.time]);
+		}
+
+		if (data.reference) {
+			rows.push(['Reference', `#${data.reference}`]);
+		}
+
+		const meta = rows.length ? `
 			<div class="ebm-success-meta">
-				${data.date ? `<div class="ebm-success-meta-row"><span>Date</span><strong>${escapeHtml(formatDisplayDate(data.date))}</strong></div>` : ''}
-				${data.time ? `<div class="ebm-success-meta-row"><span>Time</span><strong>${escapeHtml(data.time)}</strong></div>` : ''}
-				${data.reference ? `<div class="ebm-success-meta-row"><span>Reference</span><strong>#${escapeHtml(data.reference)}</strong></div>` : ''}
+				${rows.map(function (row) {
+					return `
+						<div class="ebm-success-meta-row">
+							<span>${escapeHtml(row[0])}</span>
+							<strong>${escapeHtml(row[1])}</strong>
+						</div>
+					`;
+				}).join('')}
 			</div>
-		`;
+		` : '';
 
 		return `
 			<div class="ebm-booking-shell ebm-success-shell">
@@ -1106,7 +1138,7 @@
 		`;
 	}
 
-	function showSuccess(app, data) {
+	function showSuccess(app, data, cleanUrl = true) {
 		app.classList.add('ebm-has-success');
 		app.innerHTML = buildSuccessScreen(data || {});
 
@@ -1118,7 +1150,7 @@
 			});
 		}
 
-		if (window.history && window.history.replaceState) {
+		if (cleanUrl && window.history && window.history.replaceState) {
 			const url = new URL(window.location.href);
 			url.searchParams.delete('payment');
 			url.searchParams.delete('ebm_booking');
@@ -1126,19 +1158,54 @@
 		}
 	}
 
-	function handleReturnState(app) {
-		const params = new URLSearchParams(window.location.search);
+	async function loadReturnedBookingDetails(app, token) {
+		if (!token) {
+			return;
+		}
 
-		if (params.get('payment') === 'success') {
+		try {
+			const response = await api(`booking-summary?token=${encodeURIComponent(token)}`);
+
+			showSuccess(app, {
+				title: t('booking_success', 'Booking successful'),
+				text: t('payment_success_text', 'Your payment was successful and your booking is confirmed.'),
+				job: response.job || response.job_title || '',
+				date: response.date || '',
+				time: response.time || '',
+				reference: response.reference || response.booking_id || '',
+			});
+		} catch (error) {
 			showSuccess(app, {
 				title: t('booking_success', 'Booking successful'),
 				text: t('payment_success_text', 'Your payment was successful and your booking is confirmed.'),
 			});
+		}
+	}
+
+	function handleReturnState(app) {
+		const params = new URLSearchParams(window.location.search);
+		const payment = params.get('payment');
+		const token = params.get('ebm_booking') || '';
+
+		if (payment === 'success') {
+			showSuccess(
+				app,
+				{
+					title: t('booking_success', 'Booking successful'),
+					text: t('payment_success_text', 'Your payment was successful and your booking is confirmed.'),
+					loading: !!token,
+				},
+				false
+			);
+
+			if (token) {
+				loadReturnedBookingDetails(app, token);
+			}
 
 			return true;
 		}
 
-		if (params.get('payment') === 'cancelled') {
+		if (payment === 'cancelled') {
 			message(app, 'Payment was cancelled. Your booking has not been confirmed.', 'error');
 
 			if (window.history && window.history.replaceState) {
@@ -1165,6 +1232,7 @@
 					time: state.time,
 					voucher_code: state.voucherCode || '',
 					customer: state.customer,
+					return_url: window.location.origin + window.location.pathname,
 				}),
 			});
 
@@ -1180,6 +1248,7 @@
 			showSuccess(app, {
 				title: t('booking_success', 'Booking successful'),
 				text: response.message || t('booking_success_text', 'Your booking has been received successfully.'),
+				job: response.job || response.job_title || '',
 				date: state.date,
 				time: state.time,
 				reference: response.booking_id || '',
@@ -1378,7 +1447,8 @@
 		jobs.appendChild(jobList);
 
 		const addons = screen(2, 'Choose add-ons');
-		addons.innerHTML += '<p>Prices are hidden until the final step.</p>';
+		addons.innerHTML += '<p></p>';
+
 		const addonList = document.createElement('div');
 		addonList.className = 'ebm-addon-list';
 		addonList.dataset.ebmAddons = '';
@@ -1451,23 +1521,23 @@
 
 				<div>
 					<label>House or building</label>
-					<input type="text" name="address_line_1" autocomplete="address-line1" placeholder="23">
+					<input type="text" name="address_line_1" autocomplete="address-line1" placeholder="">
 				</div>
 				<div class="ebm-field-full">
 					<label>Street address</label>
-					<input type="text" name="address_line_2" autocomplete="address-line2" placeholder="Market Street">
+					<input type="text" name="address_line_2" autocomplete="address-line2" placeholder="">
 				</div>
 				<div>
 					<label>Town or city</label>
-					<input type="text" name="town" autocomplete="address-level2" placeholder="Blackpool">
+					<input type="text" name="town" autocomplete="address-level2" placeholder="">
 				</div>
 				<div>
 					<label>County</label>
-					<input type="text" name="county" autocomplete="address-level1" placeholder="Lancashire">
+					<input type="text" name="county" autocomplete="address-level1" placeholder="">
 				</div>
 				<div>
 					<label>Postcode</label>
-					<input type="text" name="postcode" autocomplete="postal-code" placeholder="FY1 1AA">
+					<input type="text" name="postcode" autocomplete="postal-code" placeholder="">
 				</div>
 			</div>
 
