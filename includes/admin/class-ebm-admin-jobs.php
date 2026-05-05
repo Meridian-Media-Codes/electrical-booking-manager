@@ -99,7 +99,11 @@ final class EBM_Admin_Jobs {
 								<a class="ebm-job-card <?php echo $is_selected ? 'is-selected' : ''; ?>" href="<?php echo esc_url( $card_url ); ?>" data-job-id="<?php echo esc_attr( $job->id ); ?>" draggable="true">
 									<span class="ebm-job-card-title">
 										<span class="ebm-drag-handle" title="<?php esc_attr_e( 'Drag to reorder', 'electrical-booking-manager' ); ?>">⋮⋮</span>
-										<span class="ebm-job-card-name"><?php echo esc_html( $job->title ); ?></span>
+
+										<span class="ebm-job-card-name">
+											<?php echo esc_html( $job->title ); ?>
+										</span>
+
 										<span class="ebm-badge <?php echo (int) $job->is_active ? 'green' : 'grey'; ?>">
 											<?php echo (int) $job->is_active ? esc_html__( 'Active', 'electrical-booking-manager' ) : esc_html__( 'Hidden', 'electrical-booking-manager' ); ?>
 										</span>
@@ -173,6 +177,7 @@ final class EBM_Admin_Jobs {
 
 						<div class="ebm-field">
 							<label for="ebm-job-duration-value"><?php esc_html_e( 'Duration', 'electrical-booking-manager' ); ?></label>
+
 							<div class="ebm-inline-duration">
 								<input id="ebm-job-duration-value" type="number" step="0.01" min="0" name="duration_value" value="<?php echo esc_attr( $duration['value'] ); ?>">
 								<?php EBM_Admin::duration_unit_select( 'duration_unit', $duration['unit'] ); ?>
@@ -181,6 +186,7 @@ final class EBM_Admin_Jobs {
 
 						<div class="ebm-field">
 							<label for="ebm-job-deposit-type"><?php esc_html_e( 'Deposit rule', 'electrical-booking-manager' ); ?></label>
+
 							<select id="ebm-job-deposit-type" name="deposit_type">
 								<option value="global" <?php selected( $job->deposit_type ?? 'global', 'global' ); ?>><?php esc_html_e( 'Use global setting', 'electrical-booking-manager' ); ?></option>
 								<option value="percent" <?php selected( $job->deposit_type ?? '', 'percent' ); ?>><?php esc_html_e( 'Percentage', 'electrical-booking-manager' ); ?></option>
@@ -279,14 +285,14 @@ final class EBM_Admin_Jobs {
 	}
 
 	private static function addon_form( $job_id, $addon ) {
-		$is_new          = ! $addon;
-		$addon_id        = $is_new ? 0 : (int) $addon->id;
-		$addon_duration  = EBM_Admin::split_minutes_to_best_unit( $addon->extra_duration_minutes ?? 0 );
-		$form_class      = $is_new ? 'ebm-extra-card ebm-extra-card-new' : 'ebm-extra-card';
-		$button_label    = $is_new ? __( 'Add extra', 'electrical-booking-manager' ) : __( 'Save extra', 'electrical-booking-manager' );
-		$button_priority = $is_new ? 'primary' : 'secondary';
+		$is_new                 = ! $addon;
+		$addon_id               = $is_new ? 0 : (int) $addon->id;
+		$extra_duration_minutes = $addon->extra_duration_minutes ?? 0;
+		$addon_duration         = EBM_Admin::split_minutes_to_best_unit( $extra_duration_minutes );
+		$form_class             = $is_new ? 'ebm-extra-card ebm-extra-card-new' : 'ebm-extra-card';
+		$draggable              = $is_new ? '' : ' data-addon-id="' . esc_attr( $addon_id ) . '" draggable="true"';
 		?>
-		<form class="<?php echo esc_attr( $form_class ); ?>" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" <?php echo $is_new ? '' : 'data-addon-id="' . esc_attr( $addon_id ) . '" draggable="true"'; ?>>
+		<form class="<?php echo esc_attr( $form_class ); ?>" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>"<?php echo $draggable; ?>>
 			<input type="hidden" name="action" value="ebm_save_addon">
 			<input type="hidden" name="id" value="<?php echo esc_attr( $addon_id ); ?>">
 			<input type="hidden" name="job_id" value="<?php echo esc_attr( $job_id ); ?>">
@@ -294,102 +300,115 @@ final class EBM_Admin_Jobs {
 			<?php wp_nonce_field( 'ebm_save_addon_' . $addon_id ); ?>
 
 			<?php if ( ! $is_new ) : ?>
-				<div class="ebm-extra-top">
-					<div>
-						<strong>
+				<details class="ebm-extra-details">
+					<summary class="ebm-extra-summary">
+						<div class="ebm-extra-summary-left">
 							<span class="ebm-drag-handle" title="<?php esc_attr_e( 'Drag to reorder', 'electrical-booking-manager' ); ?>">⋮⋮</span>
-							<?php echo esc_html( $addon->title ); ?>
-						</strong>
 
-						<div class="ebm-extra-meta">
-							<?php echo esc_html( EBM_Helpers::money( $addon->price ) ); ?>
-							·
-							<?php echo esc_html( EBM_Admin::format_duration( $addon->extra_duration_minutes ) ); ?>
-							<?php esc_html_e( 'per unit', 'electrical-booking-manager' ); ?>
+							<div class="ebm-extra-summary-copy">
+								<strong class="ebm-extra-summary-title"><?php echo esc_html( $addon->title ); ?></strong>
+								<span class="ebm-extra-summary-meta">
+									<?php echo esc_html( EBM_Helpers::money( $addon->price ) ); ?>
+									·
+									<?php echo esc_html( EBM_Admin::format_duration( $addon->extra_duration_minutes ) ); ?>
+									<?php esc_html_e( 'per unit', 'electrical-booking-manager' ); ?>
+								</span>
+							</div>
+						</div>
+
+						<div class="ebm-extra-summary-right">
+							<span class="ebm-badge <?php echo (int) $addon->is_active ? 'green' : 'grey'; ?>">
+								<?php echo (int) $addon->is_active ? esc_html__( 'Active', 'electrical-booking-manager' ) : esc_html__( 'Hidden', 'electrical-booking-manager' ); ?>
+							</span>
+
+							<span class="ebm-extra-toggle-indicator" aria-hidden="true">⌄</span>
+						</div>
+					</summary>
+
+					<div class="ebm-extra-body">
+			<?php else : ?>
+				<div class="ebm-extra-body is-open">
+			<?php endif; ?>
+
+					<div class="ebm-extra-edit ebm-extra-form-grid">
+						<div class="ebm-field">
+							<label for="ebm-addon-title-<?php echo esc_attr( $addon_id ); ?>">
+								<?php esc_html_e( 'Extra name', 'electrical-booking-manager' ); ?>
+							</label>
+							<input id="ebm-addon-title-<?php echo esc_attr( $addon_id ); ?>" type="text" name="title" required value="<?php echo esc_attr( $addon->title ?? '' ); ?>" placeholder="<?php esc_attr_e( 'Smart switch upgrade', 'electrical-booking-manager' ); ?>">
+						</div>
+
+						<div class="ebm-field ebm-field-description">
+							<label for="ebm-addon-description-<?php echo esc_attr( $addon_id ); ?>">
+								<?php esc_html_e( 'Description', 'electrical-booking-manager' ); ?>
+							</label>
+							<textarea id="ebm-addon-description-<?php echo esc_attr( $addon_id ); ?>" name="description" rows="4"><?php echo esc_textarea( $addon->description ?? '' ); ?></textarea>
+						</div>
+
+						<div class="ebm-field">
+							<label for="ebm-addon-price-<?php echo esc_attr( $addon_id ); ?>">
+								<?php esc_html_e( 'Price', 'electrical-booking-manager' ); ?>
+							</label>
+							<input id="ebm-addon-price-<?php echo esc_attr( $addon_id ); ?>" type="number" step="0.01" min="0" name="price" value="<?php echo esc_attr( $addon->price ?? '0.00' ); ?>">
+						</div>
+
+						<div class="ebm-field">
+							<label for="ebm-addon-min-<?php echo esc_attr( $addon_id ); ?>">
+								<?php esc_html_e( 'Min qty', 'electrical-booking-manager' ); ?>
+							</label>
+							<input id="ebm-addon-min-<?php echo esc_attr( $addon_id ); ?>" type="number" min="0" name="min_qty" value="<?php echo esc_attr( $addon->min_qty ?? 0 ); ?>">
+						</div>
+
+						<div class="ebm-field">
+							<label for="ebm-addon-max-<?php echo esc_attr( $addon_id ); ?>">
+								<?php esc_html_e( 'Max qty', 'electrical-booking-manager' ); ?>
+							</label>
+							<input id="ebm-addon-max-<?php echo esc_attr( $addon_id ); ?>" type="number" min="0" name="max_qty" value="<?php echo esc_attr( $addon->max_qty ?? 1 ); ?>">
+						</div>
+
+						<div class="ebm-field ebm-field-duration">
+							<label for="ebm-addon-duration-<?php echo esc_attr( $addon_id ); ?>">
+								<?php esc_html_e( 'Extra duration', 'electrical-booking-manager' ); ?>
+							</label>
+
+							<div class="ebm-duration-group ebm-inline-duration">
+								<input id="ebm-addon-duration-<?php echo esc_attr( $addon_id ); ?>" type="number" step="0.01" min="0" name="extra_duration_value" value="<?php echo esc_attr( $addon_duration['value'] ); ?>">
+								<?php EBM_Admin::duration_unit_select( 'extra_duration_unit', $addon_duration['unit'] ); ?>
+							</div>
+						</div>
+
+						<div class="ebm-field ebm-field-full">
+							<label class="ebm-checkbox-row">
+								<input type="checkbox" name="is_active" value="1" <?php checked( (int) ( $addon->is_active ?? 1 ), 1 ); ?>>
+								<span><?php esc_html_e( 'Active on booking form', 'electrical-booking-manager' ); ?></span>
+							</label>
 						</div>
 					</div>
 
-					<span class="ebm-badge <?php echo (int) $addon->is_active ? 'green' : 'grey'; ?>">
-						<?php echo (int) $addon->is_active ? esc_html__( 'Active', 'electrical-booking-manager' ) : esc_html__( 'Hidden', 'electrical-booking-manager' ); ?>
-					</span>
-				</div>
-			<?php endif; ?>
+					<div class="ebm-actions ebm-extra-actions">
+						<?php submit_button( $is_new ? __( 'Add extra', 'electrical-booking-manager' ) : __( 'Save extra', 'electrical-booking-manager' ), $is_new ? 'primary' : 'secondary', 'submit', false ); ?>
 
-			<div class="ebm-extra-edit ebm-extra-form-grid">
-				<div class="ebm-field">
-					<label for="ebm-addon-title-<?php echo esc_attr( $addon_id ); ?>">
-						<?php esc_html_e( 'Extra name', 'electrical-booking-manager' ); ?>
-					</label>
-					<input id="ebm-addon-title-<?php echo esc_attr( $addon_id ); ?>" type="text" name="title" required value="<?php echo esc_attr( $addon->title ?? '' ); ?>" placeholder="<?php esc_attr_e( 'Smart switch upgrade', 'electrical-booking-manager' ); ?>">
-				</div>
+						<?php if ( ! $is_new ) : ?>
+							<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ebm_delete_addon&addon_id=' . $addon_id . '&job_id=' . $job_id ), 'ebm_delete_addon_' . $addon_id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Hide this extra from the booking form?', 'electrical-booking-manager' ) ); ?>');">
+								<?php esc_html_e( 'Hide extra', 'electrical-booking-manager' ); ?>
+							</a>
 
-				<div class="ebm-field ebm-field-description">
-					<label for="ebm-addon-description-<?php echo esc_attr( $addon_id ); ?>">
-						<?php esc_html_e( 'Description', 'electrical-booking-manager' ); ?>
-					</label>
-					<textarea id="ebm-addon-description-<?php echo esc_attr( $addon_id ); ?>" name="description" rows="4"><?php echo esc_textarea( $addon->description ?? '' ); ?></textarea>
-				</div>
-
-				<div class="ebm-field">
-					<label for="ebm-addon-price-<?php echo esc_attr( $addon_id ); ?>">
-						<?php esc_html_e( 'Price', 'electrical-booking-manager' ); ?>
-					</label>
-					<input id="ebm-addon-price-<?php echo esc_attr( $addon_id ); ?>" type="number" step="0.01" min="0" name="price" value="<?php echo esc_attr( $addon->price ?? '0.00' ); ?>">
-				</div>
-
-				<div class="ebm-field">
-					<label for="ebm-addon-min-<?php echo esc_attr( $addon_id ); ?>">
-						<?php esc_html_e( 'Min qty', 'electrical-booking-manager' ); ?>
-					</label>
-					<input id="ebm-addon-min-<?php echo esc_attr( $addon_id ); ?>" type="number" min="0" name="min_qty" value="<?php echo esc_attr( $addon->min_qty ?? 0 ); ?>">
-				</div>
-
-				<div class="ebm-field">
-					<label for="ebm-addon-max-<?php echo esc_attr( $addon_id ); ?>">
-						<?php esc_html_e( 'Max qty', 'electrical-booking-manager' ); ?>
-					</label>
-					<input id="ebm-addon-max-<?php echo esc_attr( $addon_id ); ?>" type="number" min="0" name="max_qty" value="<?php echo esc_attr( $addon->max_qty ?? 1 ); ?>">
-				</div>
-
-				<div class="ebm-field ebm-field-duration">
-					<label for="ebm-addon-duration-<?php echo esc_attr( $addon_id ); ?>">
-						<?php esc_html_e( 'Extra duration', 'electrical-booking-manager' ); ?>
-					</label>
-
-					<div class="ebm-duration-group ebm-inline-duration">
-						<input id="ebm-addon-duration-<?php echo esc_attr( $addon_id ); ?>" type="number" step="0.01" min="0" name="extra_duration_value" value="<?php echo esc_attr( $addon_duration['value'] ); ?>">
-						<?php EBM_Admin::duration_unit_select( 'extra_duration_unit', $addon_duration['unit'] ); ?>
+							<a class="ebm-danger-link" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ebm_hard_delete_addon&addon_id=' . $addon_id . '&job_id=' . $job_id ), 'ebm_hard_delete_addon_' . $addon_id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Permanently delete this extra? This cannot be undone.', 'electrical-booking-manager' ) ); ?>');">
+								<?php esc_html_e( 'Delete permanently', 'electrical-booking-manager' ); ?>
+							</a>
+						<?php endif; ?>
 					</div>
+
 				</div>
 
-				<div class="ebm-field ebm-field-full">
-					<label class="ebm-checkbox-row">
-						<input type="checkbox" name="is_active" value="1" <?php checked( (int) ( $addon->is_active ?? 1 ), 1 ); ?>>
-						<span><?php esc_html_e( 'Active on booking form', 'electrical-booking-manager' ); ?></span>
-					</label>
-				</div>
-			</div>
-
-			<div class="ebm-actions ebm-extra-actions">
-				<?php submit_button( $button_label, $button_priority, 'submit', false ); ?>
-
-				<?php if ( ! $is_new ) : ?>
-					<a class="button" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ebm_delete_addon&addon_id=' . $addon_id . '&job_id=' . $job_id ), 'ebm_delete_addon_' . $addon_id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Hide this extra from the booking form?', 'electrical-booking-manager' ) ); ?>');">
-						<?php esc_html_e( 'Hide extra', 'electrical-booking-manager' ); ?>
-					</a>
-
-					<a class="ebm-danger-link" href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ebm_hard_delete_addon&addon_id=' . $addon_id . '&job_id=' . $job_id ), 'ebm_hard_delete_addon_' . $addon_id ) ); ?>" onclick="return confirm('<?php echo esc_js( __( 'Permanently delete this extra? This cannot be undone.', 'electrical-booking-manager' ) ); ?>');">
-						<?php esc_html_e( 'Delete permanently', 'electrical-booking-manager' ); ?>
-					</a>
-				<?php endif; ?>
-			</div>
+			<?php if ( ! $is_new ) : ?>
+				</details>
+			<?php endif; ?>
 		</form>
 		<?php
 	}
 
 	public static function maybe_add_sort_order_columns() {
-		global $wpdb;
-
 		self::maybe_add_sort_order_column(
 			EBM_Helpers::table( 'jobs' ),
 			"SELECT id FROM " . EBM_Helpers::table( 'jobs' ) . " ORDER BY title ASC"
