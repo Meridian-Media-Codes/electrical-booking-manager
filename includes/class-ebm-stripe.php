@@ -53,10 +53,26 @@ final class EBM_Stripe {
 		return $data;
 	}
 
-	public static function checkout( $booking_id, $amount, $type = 'deposit' ) {
+	private static function clean_return_url( $return_url ) {
+		$return_url = esc_url_raw( (string) $return_url );
+
+		if ( '' === $return_url ) {
+			$return_url = wp_get_referer();
+		}
+
+		if ( '' === $return_url ) {
+			$return_url = home_url( '/' );
+		}
+
+		return wp_validate_redirect( $return_url, home_url( '/' ) );
+	}
+
+	public static function checkout( $booking_id, $amount, $type = 'deposit', $return_url = '' ) {
 		global $wpdb;
 
-		$amount = (float) $amount;
+		$booking_id = absint( $booking_id );
+		$amount     = (float) $amount;
+		$type       = sanitize_key( $type );
 
 		if ( $amount <= 0 ) {
 			return new WP_Error(
@@ -82,12 +98,14 @@ final class EBM_Stripe {
 			);
 		}
 
+		$return_url = self::clean_return_url( $return_url );
+
 		$success_url = add_query_arg(
 			array(
 				'ebm_booking' => $booking->public_token,
 				'payment'     => 'success',
 			),
-			home_url( '/' )
+			$return_url
 		);
 
 		$cancel_url = add_query_arg(
@@ -95,25 +113,25 @@ final class EBM_Stripe {
 				'ebm_booking' => $booking->public_token,
 				'payment'     => 'cancelled',
 			),
-			home_url( '/' )
+			$return_url
 		);
 
 		$data = self::request(
 			'checkout/sessions',
 			array(
-				'mode'                                      => 'payment',
-				'success_url'                               => $success_url,
-				'cancel_url'                                => $cancel_url,
-				'customer_email'                            => $booking->email,
-				'client_reference_id'                       => $booking_id,
-				'metadata[booking_id]'                      => $booking_id,
-				'metadata[payment_type]'                    => $type,
-				'payment_intent_data[metadata][booking_id]' => $booking_id,
-				'payment_intent_data[metadata][payment_type]' => $type,
-				'line_items[0][price_data][currency]'       => 'gbp',
-				'line_items[0][price_data][product_data][name]' => 'Booking ' . ucfirst( sanitize_key( $type ) ),
-				'line_items[0][price_data][unit_amount]'    => max( 50, (int) round( $amount * 100 ) ),
-				'line_items[0][quantity]'                   => 1,
+				'mode'                                           => 'payment',
+				'success_url'                                    => $success_url,
+				'cancel_url'                                     => $cancel_url,
+				'customer_email'                                 => sanitize_email( $booking->email ),
+				'client_reference_id'                            => $booking_id,
+				'metadata[booking_id]'                           => $booking_id,
+				'metadata[payment_type]'                         => $type,
+				'payment_intent_data[metadata][booking_id]'      => $booking_id,
+				'payment_intent_data[metadata][payment_type]'    => $type,
+				'line_items[0][price_data][currency]'            => 'gbp',
+				'line_items[0][price_data][product_data][name]'  => 'Booking ' . ucfirst( $type ),
+				'line_items[0][price_data][unit_amount]'         => max( 50, (int) round( $amount * 100 ) ),
+				'line_items[0][quantity]'                        => 1,
 			)
 		);
 
@@ -122,7 +140,7 @@ final class EBM_Stripe {
 				EBM_Helpers::table( 'transactions' ),
 				array(
 					'booking_id'  => $booking_id,
-					'type'        => sanitize_key( $type ),
+					'type'        => $type,
 					'status'      => 'checkout_created',
 					'amount'      => $amount,
 					'provider'    => 'stripe',
@@ -274,6 +292,18 @@ final class EBM_Stripe {
 			if ( class_exists( 'EBM_Emails' ) ) {
 				EBM_Emails::confirmation( $booking_id );
 			}
+		}
+
+		if ( 'balance' === $payment_type ) {
+			$wpdb->update(
+				EBM_Helpers::table( 'bookings' ),
+				array(
+					'updated_at' => current_time( 'mysql' ),
+				),
+				array( 'id' => $booking_id ),
+				array( '%s' ),
+				array( '%d' )
+			);
 		}
 	}
 }

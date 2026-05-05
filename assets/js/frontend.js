@@ -1371,7 +1371,7 @@
 		shell.className = 'ebm-booking-shell';
 		shell.appendChild(stepHeader(app, state));
 
-		const jobs = screen(1, 'Choose the job');
+		const jobs = screen(1, 'Book an appointment with us');
 		const jobList = document.createElement('div');
 		jobList.className = 'ebm-job-list';
 		jobList.dataset.ebmJobs = '';
