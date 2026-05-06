@@ -295,7 +295,7 @@ final class EBM_Emails {
 			return false;
 		}
 
-		if ( ! in_array( $booking->status, array( 'confirmed', 'completed' ), true ) ) {
+		if ( ! in_array( $booking->status, array( 'deposit_paid', 'confirmed', 'completed' ), true ) ) {
 			return false;
 		}
 

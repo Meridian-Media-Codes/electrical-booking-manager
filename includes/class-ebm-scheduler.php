@@ -320,7 +320,7 @@ final class EBM_Scheduler {
 					"SELECT COUNT(*)
 					FROM $booking_days_table d
 					INNER JOIN $bookings_table b ON b.id = d.booking_id
-					WHERE b.status IN ('pending_payment', 'confirmed')
+					WHERE b.status IN ('pending_payment', 'deposit paid', 'confirmed')
 					AND b.id != %d
 					AND d.start_at < %s
 					AND d.end_at > %s",

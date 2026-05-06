@@ -276,7 +276,7 @@ final class EBM_Stripe {
 			$wpdb->update(
 				EBM_Helpers::table( 'bookings' ),
 				array(
-					'status'            => 'confirmed',
+					'status'            => 'deposit_paid',
 					'stripe_session_id' => sanitize_text_field( $session['id'] ?? '' ),
 					'updated_at'        => current_time( 'mysql' ),
 				),
@@ -285,8 +285,12 @@ final class EBM_Stripe {
 				array( '%d' )
 			);
 
-			if ( class_exists( 'EBM_Google' ) && EBM_Google::connected() && empty( $booking->google_event_id ) ) {
-				EBM_Google::create_event( $booking_id );
+			if ( class_exists( 'EBM_Google' ) && EBM_Google::connected() ) {
+				if ( method_exists( 'EBM_Google', 'recreate_event' ) ) {
+					EBM_Google::recreate_event( $booking_id );
+				} else {
+					EBM_Google::create_event( $booking_id );
+				}
 			}
 
 			if ( class_exists( 'EBM_Emails' ) ) {

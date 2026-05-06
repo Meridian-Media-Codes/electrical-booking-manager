@@ -13,10 +13,15 @@ final class EBM_Admin_Bookings {
 	private static function statuses() {
 		return array(
 			'pending_payment' => __( 'Pending payment', 'electrical-booking-manager' ),
+			'deposit_paid'    => __( 'Deposit paid', 'electrical-booking-manager' ),
 			'confirmed'       => __( 'Confirmed', 'electrical-booking-manager' ),
 			'completed'       => __( 'Completed', 'electrical-booking-manager' ),
 			'cancelled'       => __( 'Cancelled', 'electrical-booking-manager' ),
 		);
+	}
+
+	private static function google_sync_statuses() {
+		return array( 'deposit_paid', 'confirmed', 'completed' );
 	}
 
 	public static function render() {
@@ -77,7 +82,7 @@ final class EBM_Admin_Bookings {
 						<?php
 						$date_value = mysql2date( 'Y-m-d', $booking->start_at, false );
 						$time_value = mysql2date( 'H:i', $booking->start_at, false );
-						$can_sync   = in_array( $booking->status, array( 'confirmed', 'completed' ), true );
+						$can_sync   = in_array( $booking->status, self::google_sync_statuses(), true );
 						?>
 						<tr>
 							<td><?php echo esc_html( $booking->id ); ?></td>
@@ -101,7 +106,15 @@ final class EBM_Admin_Bookings {
 
 							<td><?php echo esc_html( $booking->job_title ); ?></td>
 
-							<td><?php echo esc_html( $statuses[ $booking->status ] ?? $booking->status ); ?></td>
+							<td>
+								<?php if ( 'deposit_paid' === $booking->status ) : ?>
+									<span style="color:#137333;font-weight:600;">
+										<?php echo esc_html( $statuses[ $booking->status ] ); ?>
+									</span>
+								<?php else : ?>
+									<?php echo esc_html( $statuses[ $booking->status ] ?? $booking->status ); ?>
+								<?php endif; ?>
+							</td>
 
 							<td><?php echo esc_html( EBM_Helpers::money( $booking->total_amount ) ); ?></td>
 
@@ -111,8 +124,10 @@ final class EBM_Admin_Bookings {
 									<small><?php echo esc_html( substr( $booking->google_event_id, 0, 12 ) ); ?>...</small>
 								<?php elseif ( 'pending_payment' === $booking->status ) : ?>
 									<span style="color:#b54708;"><?php esc_html_e( 'Waiting for payment', 'electrical-booking-manager' ); ?></span>
+								<?php elseif ( 'cancelled' === $booking->status ) : ?>
+									<span style="color:#646970;"><?php esc_html_e( 'Cancelled', 'electrical-booking-manager' ); ?></span>
 								<?php else : ?>
-									<span style="color:#646970;"><?php esc_html_e( 'Not linked', 'electrical-booking-manager' ); ?></span>
+									<span style="color:#b54708;"><?php esc_html_e( 'Not linked', 'electrical-booking-manager' ); ?></span>
 								<?php endif; ?>
 
 								<?php if ( $can_sync ) : ?>
@@ -187,7 +202,7 @@ final class EBM_Admin_Bookings {
 			wp_die( esc_html__( 'Booking not found.', 'electrical-booking-manager' ) );
 		}
 
-		if ( ! in_array( $booking->status, array( 'confirmed', 'completed' ), true ) ) {
+		if ( ! in_array( $booking->status, self::google_sync_statuses(), true ) ) {
 			wp_safe_redirect( admin_url( 'admin.php?page=ebm-bookings&google_failed=1' ) );
 			exit;
 		}
@@ -301,7 +316,7 @@ final class EBM_Admin_Bookings {
 					array( '%s', '%s' ),
 					array( '%d' )
 				);
-			} elseif ( in_array( $status, array( 'confirmed', 'completed' ), true ) ) {
+			} elseif ( in_array( $status, self::google_sync_statuses(), true ) ) {
 				if ( method_exists( 'EBM_Google', 'recreate_event' ) ) {
 					if ( $date_changed || empty( $booking->google_event_id ) || ! EBM_Google::event_exists( $booking->google_event_id ) ) {
 						EBM_Google::recreate_event( $id );

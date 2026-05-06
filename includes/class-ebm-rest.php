@@ -191,7 +191,7 @@ final class EBM_REST {
 				"SELECT d.start_at, d.end_at
 				FROM $days_table d
 				INNER JOIN $bookings_table b ON b.id = d.booking_id
-				WHERE b.status IN ('pending_payment','confirmed')
+				WHERE b.status IN ('pending_payment','deposit_paid','confirmed')
 				AND d.start_at < %s
 				AND d.end_at > %s",
 				$range_end,
@@ -625,7 +625,7 @@ final class EBM_REST {
 			'total'          => round( (float) $booking->total_amount, 2 ),
 			'deposit'        => round( (float) $booking->deposit_amount, 2 ),
 			'balance'        => round( (float) $booking->balance_amount, 2 ),
-			'payment_status' => in_array( $booking->status, array( 'confirmed', 'completed' ), true ) ? 'paid' : 'pending',
+			'payment_status' => in_array( $booking->status, array( 'deposit_paid', 'confirmed', 'completed' ), true ) ? 'paid' : 'pending',
 		);
 	}
 
