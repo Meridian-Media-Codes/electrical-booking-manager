@@ -104,7 +104,19 @@ final class EBM_Admin_Bookings {
 								<small><?php echo esc_html( $booking->email ); ?></small>
 							</td>
 
-							<td><?php echo esc_html( $booking->job_title ); ?></td>
+							<td>
+								<strong><?php echo esc_html( $booking->job_title ); ?></strong><br>
+								<small>
+									<strong><?php esc_html_e( 'Extras:', 'electrical-booking-manager' ); ?></strong><br>
+									<?php
+									if ( class_exists( 'EBM_Helpers' ) && method_exists( 'EBM_Helpers', 'booking_extras_text' ) ) {
+										echo nl2br( esc_html( EBM_Helpers::booking_extras_text( $booking ) ) );
+									} else {
+										esc_html_e( 'No extras selected', 'electrical-booking-manager' );
+									}
+									?>
+								</small>
+							</td>
 
 							<td>
 								<?php if ( 'deposit_paid' === $booking->status ) : ?>

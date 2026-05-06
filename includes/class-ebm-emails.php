@@ -14,6 +14,10 @@ final class EBM_Emails {
 		}
 	}
 
+	private static function active_statuses() {
+		return array( 'deposit_paid', 'confirmed', 'completed' );
+	}
+
 	private static function option_key( $prefix, $booking_id ) {
 		return $prefix . absint( $booking_id );
 	}
@@ -110,6 +114,14 @@ final class EBM_Emails {
 				absint( $booking_id )
 			)
 		);
+	}
+
+	private static function extras_html( $booking ) {
+		if ( class_exists( 'EBM_Helpers' ) && method_exists( 'EBM_Helpers', 'booking_extras_html' ) ) {
+			return EBM_Helpers::booking_extras_html( $booking );
+		}
+
+		return esc_html__( 'No extras selected', 'electrical-booking-manager' );
 	}
 
 	private static function date_line( $start_at, $end_at ) {
@@ -259,15 +271,21 @@ final class EBM_Emails {
 	private static function details_table( $rows ) {
 		$html = '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #d8e0ea;border-radius:18px;overflow:hidden;background:#f8fbfd;">';
 
-		$total_rows = count( $rows );
-		$count      = 0;
+		$filtered_rows = array();
 
 		foreach ( $rows as $label => $value ) {
-			$count++;
-
 			if ( '' === trim( wp_strip_all_tags( (string) $value ) ) ) {
 				continue;
 			}
+
+			$filtered_rows[ $label ] = $value;
+		}
+
+		$total_rows = count( $filtered_rows );
+		$count      = 0;
+
+		foreach ( $filtered_rows as $label => $value ) {
+			$count++;
 
 			$border = $count < $total_rows ? 'border-bottom:1px solid #e5edf4;' : '';
 
@@ -295,7 +313,7 @@ final class EBM_Emails {
 			return false;
 		}
 
-		if ( ! in_array( $booking->status, array( 'deposit_paid', 'confirmed', 'completed' ), true ) ) {
+		if ( ! in_array( $booking->status, self::active_statuses(), true ) ) {
 			return false;
 		}
 
@@ -321,6 +339,7 @@ final class EBM_Emails {
 		$content = self::details_table(
 			array(
 				__( 'Job', 'electrical-booking-manager' )             => esc_html( $booking->job_title ),
+				__( 'Extras', 'electrical-booking-manager' )          => self::extras_html( $booking ),
 				__( 'Schedule', 'electrical-booking-manager' )        => self::schedule_html( $booking ),
 				__( 'Service address', 'electrical-booking-manager' ) => self::address_html( $booking->customer_address ),
 				__( 'Total', 'electrical-booking-manager' )           => self::money( $booking->total_amount ),
@@ -331,7 +350,11 @@ final class EBM_Emails {
 
 		$content .= '
 			<p style="margin:22px 0 0;font-size:15px;line-height:1.65;color:#5f6f82;">
-				' . esc_html__( 'Please make sure someone is available at the property at the booked time. If anything changes, contact us as soon as possible.', 'electrical-booking-manager' ) . '
+				' . esc_html__( 'Please check the job and extras above. If anything looks wrong, contact us as soon as possible.', 'electrical-booking-manager' ) . '
+			</p>
+
+			<p style="margin:12px 0 0;font-size:15px;line-height:1.65;color:#5f6f82;">
+				' . esc_html__( 'Please make sure someone is available at the property at the booked time.', 'electrical-booking-manager' ) . '
 			</p>';
 
 		$subject = sprintf(
@@ -383,6 +406,7 @@ final class EBM_Emails {
 				__( 'Email', 'electrical-booking-manager' )           => '<a href="mailto:' . esc_attr( $booking->customer_email ) . '" style="color:#e87c00;text-decoration:none;">' . esc_html( $booking->customer_email ) . '</a>',
 				__( 'Phone', 'electrical-booking-manager' )           => esc_html( $booking->customer_phone ),
 				__( 'Job', 'electrical-booking-manager' )             => esc_html( $booking->job_title ),
+				__( 'Extras', 'electrical-booking-manager' )          => self::extras_html( $booking ),
 				__( 'Schedule', 'electrical-booking-manager' )        => self::schedule_html( $booking ),
 				__( 'Service address', 'electrical-booking-manager' ) => self::address_html( $booking->customer_address ),
 				__( 'Status', 'electrical-booking-manager' )          => esc_html( self::status_label( $booking->status ) ),
@@ -391,6 +415,11 @@ final class EBM_Emails {
 				__( 'Balance', 'electrical-booking-manager' )         => self::money( $booking->balance_amount ),
 			)
 		);
+
+		$content .= '
+			<p style="margin:22px 0 0;font-size:15px;line-height:1.65;color:#5f6f82;">
+				' . esc_html__( 'Check the extras before attending so the engineer brings the correct parts and materials.', 'electrical-booking-manager' ) . '
+			</p>';
 
 		$subject = sprintf(
 			/* translators: 1: job title, 2: date */
@@ -429,7 +458,7 @@ final class EBM_Emails {
 			return false;
 		}
 
-		if ( 'confirmed' !== $booking->status ) {
+		if ( ! in_array( $booking->status, array( 'deposit_paid', 'confirmed' ), true ) ) {
 			return false;
 		}
 
@@ -454,6 +483,7 @@ final class EBM_Emails {
 		$content = self::details_table(
 			array(
 				__( 'Job', 'electrical-booking-manager' )             => esc_html( $booking->job_title ),
+				__( 'Extras', 'electrical-booking-manager' )          => self::extras_html( $booking ),
 				__( 'Schedule', 'electrical-booking-manager' )        => self::schedule_html( $booking ),
 				__( 'Service address', 'electrical-booking-manager' ) => self::address_html( $booking->customer_address ),
 			)
@@ -501,13 +531,12 @@ final class EBM_Emails {
 			$wpdb->prepare(
 				"SELECT id
 				FROM " . EBM_Helpers::table( 'bookings' ) . "
-				WHERE status = %s
+				WHERE status IN ('deposit_paid', 'confirmed')
 				AND reminder_sent = 0
 				AND start_at >= %s
 				AND start_at <= %s
 				ORDER BY start_at ASC
 				LIMIT 100",
-				'confirmed',
 				$tomorrow_start->format( 'Y-m-d H:i:s' ),
 				$tomorrow_end->format( 'Y-m-d H:i:s' )
 			)
@@ -548,6 +577,7 @@ final class EBM_Emails {
 		$content = self::details_table(
 			array(
 				__( 'Job', 'electrical-booking-manager' )          => esc_html( $booking->job_title ),
+				__( 'Extras', 'electrical-booking-manager' )       => self::extras_html( $booking ),
 				__( 'Total', 'electrical-booking-manager' )        => self::money( $booking->total_amount ),
 				__( 'Deposit paid', 'electrical-booking-manager' ) => self::money( $booking->deposit_amount ),
 				__( 'Balance due', 'electrical-booking-manager' )  => self::money( $booking->balance_amount ),
