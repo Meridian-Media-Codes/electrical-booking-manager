@@ -1417,6 +1417,7 @@ body:has(.ebm-calendar-popover.is-open) .wp-site-blocks > footer {
 	.ebm-addon-title {
 		font-size: 15px;
 		line-height: 1.25;
+		font-weight: normal;
 	}
 
 	.ebm-addon-description {
@@ -1438,5 +1439,123 @@ body:has(.ebm-calendar-popover.is-open) .wp-site-blocks > footer {
 		min-height: 42px;
 		font-size: 18px;
 		padding: 6px 8px;
+	}
+}
+
+/* Service cards with descriptions */
+
+.ebm-job-list {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 18px;
+}
+
+.ebm-job-card.ebm-job-card-rich {
+	display: grid;
+	grid-template-columns: 62px minmax(0, 1fr);
+	gap: 16px;
+	align-items: start;
+	width: 100%;
+	min-height: 138px;
+	padding: 20px 22px;
+	border: 1px solid var(--ebm-line);
+	border-radius: var(--ebm-radius-md);
+	background: #ffffff;
+	text-align: left;
+	cursor: pointer;
+	transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.ebm-job-card.ebm-job-card-rich:hover {
+	border-color: var(--ebm-orange);
+	transform: translateY(-1px);
+}
+
+.ebm-job-card-media {
+	width: 62px;
+	height: 62px;
+	border-radius: 999px;
+	background: #eef2f7;
+	border: 1px solid var(--ebm-line);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	font-size: 24px;
+	font-weight: 850;
+	line-height: 1;
+	color: var(--ebm-navy);
+	flex-shrink: 0;
+}
+
+.ebm-job-card-content {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ebm-job-title {
+	display: block;
+	font-size: 18px;
+	font-weight: 850;
+	line-height: 1.25;
+	color: var(--ebm-text);
+}
+
+.ebm-job-description {
+	display: block;
+	font-size: 15px;
+	line-height: 1.5;
+	color: var(--ebm-muted);
+}
+
+.ebm-job-card.ebm-job-card-rich .ebm-job-meta {
+	display: none !important;
+}
+
+.ebm-job-card.ebm-job-card-rich.is-selected {
+	background: var(--ebm-navy);
+	border-color: var(--ebm-navy);
+	color: #ffffff;
+}
+
+.ebm-job-card.ebm-job-card-rich.is-selected .ebm-job-title,
+.ebm-job-card.ebm-job-card-rich.is-selected .ebm-job-description {
+	color: #ffffff;
+}
+
+.ebm-job-card.ebm-job-card-rich.is-selected .ebm-job-card-media {
+	background: rgba(255, 255, 255, 0.14);
+	border-color: rgba(255, 255, 255, 0.24);
+	color: #ffffff;
+}
+
+@media (max-width: 860px) {
+	.ebm-job-list {
+		grid-template-columns: 1fr;
+	}
+}
+
+@media (max-width: 640px) {
+	.ebm-job-card.ebm-job-card-rich {
+		grid-template-columns: 52px minmax(0, 1fr);
+		gap: 14px;
+		min-height: 0;
+		padding: 16px;
+	}
+
+	.ebm-job-card-media {
+		width: 52px;
+		height: 52px;
+		font-size: 20px;
+	}
+
+	.ebm-job-title {
+		font-size: 17px;
+	}
+
+	.ebm-job-description {
+		font-size: 14px;
+		line-height: 1.45;
 	}
 }

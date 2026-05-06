@@ -324,52 +324,60 @@
 		return `${prefix}:${JSON.stringify(data)}`;
 	}
 
-	function renderJobs(app, state, target, jobs) {
-		target.innerHTML = '';
+function renderJobs(app, state, target, jobs) {
+	target.innerHTML = '';
 
-		if (!jobs.length) {
-			target.innerHTML = '<div class="ebm-empty">No jobs are available yet.</div>';
-			return;
-		}
+	if (!jobs.length) {
+		target.innerHTML = '<div class="ebm-empty">No services are available yet.</div>';
+		return;
+	}
 
-		jobs.forEach(function (job) {
-			const button = document.createElement('button');
-			button.type = 'button';
-			button.className = 'ebm-job-card';
-			button.dataset.jobId = job.id;
-			button.innerHTML = `
-				<span class="ebm-job-title">${escapeHtml(job.title || 'Job')}</span>
-				<span class="ebm-job-meta">${durationLabel(job.duration_minutes || 0)}</span>
-			`;
+	jobs.forEach(function (job) {
+		const button = document.createElement('button');
+		button.type = 'button';
+		button.className = 'ebm-job-card ebm-job-card-rich';
+		button.dataset.jobId = job.id;
 
-			button.addEventListener('click', async function () {
-				state.jobId = Number(job.id);
-				state.addons = {};
-				state.date = '';
-				state.time = '';
-				state.slots = [];
-				state.quote = null;
-				state.voucherCode = '';
+		const title = escapeHtml(job.title || 'Service');
+		const description = escapeHtml(job.description || 'Choose this service to continue.');
+		const iconLetter = escapeHtml((job.title || 'S').trim().charAt(0).toUpperCase());
 
-				cache.months = {};
+		button.innerHTML = `
+			<span class="ebm-job-card-media" aria-hidden="true">${iconLetter}</span>
+			<span class="ebm-job-card-content">
+				<span class="ebm-job-title">${title}</span>
+				<span class="ebm-job-description">${description}</span>
+			</span>
+		`;
 
-				qsa('.ebm-job-card', target).forEach(function (card) {
-					card.classList.remove('is-selected');
-					card.setAttribute('aria-pressed', 'false');
-				});
+		button.addEventListener('click', async function () {
+			state.jobId = Number(job.id);
+			state.addons = {};
+			state.date = '';
+			state.time = '';
+			state.slots = [];
+			state.quote = null;
+			state.voucherCode = '';
 
-				button.classList.add('is-selected');
-				button.setAttribute('aria-pressed', 'true');
+			cache.months = {};
 
-				clearMessage(app);
-				await loadAddons(app, state);
-				preloadInitialAvailability(state);
-				goToStep(app, state, 2);
+			qsa('.ebm-job-card', target).forEach(function (card) {
+				card.classList.remove('is-selected');
+				card.setAttribute('aria-pressed', 'false');
 			});
 
-			target.appendChild(button);
+			button.classList.add('is-selected');
+			button.setAttribute('aria-pressed', 'true');
+
+			clearMessage(app);
+			await loadAddons(app, state);
+			preloadInitialAvailability(state);
+			goToStep(app, state, 2);
 		});
-	}
+
+		target.appendChild(button);
+	});
+}
 
 	async function loadJobs(app, state, target) {
 		const preloaded = config().preloadedJobs;
@@ -1438,7 +1446,7 @@ function renderAddons(app, state, target, addons) {
 		shell.className = 'ebm-booking-shell';
 		shell.appendChild(stepHeader(app, state));
 
-		const jobs = screen(1, 'Book an appointment with us');
+		const jobs = screen(1, 'Select Service');
 		const jobList = document.createElement('div');
 		jobList.className = 'ebm-job-list';
 		jobList.dataset.ebmJobs = '';
