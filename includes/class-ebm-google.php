@@ -391,8 +391,85 @@ final class EBM_Google {
 		return false;
 	}
 
+	public static function get_event( $event_id ) {
+		if ( ! self::connected() ) {
+			return new WP_Error(
+				'ebm_google_not_connected',
+				__( 'Google Calendar is not connected.', 'electrical-booking-manager' )
+			);
+		}
+
+		$event_id = sanitize_text_field( $event_id );
+
+		if ( '' === $event_id ) {
+			return new WP_Error(
+				'ebm_google_missing_event_id',
+				__( 'Google event ID is missing.', 'electrical-booking-manager' )
+			);
+		}
+
+		$token = self::token();
+
+		if ( ! $token ) {
+			return new WP_Error(
+				'ebm_google_token',
+				__( 'Could not refresh the Google Calendar access token.', 'electrical-booking-manager' )
+			);
+		}
+
+		$response = wp_remote_get(
+			'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode( EBM_Settings::get( 'google_calendar_id', 'primary' ) ) . '/events/' . rawurlencode( $event_id ),
+			array(
+				'timeout' => 20,
+				'headers' => array(
+					'Authorization' => 'Bearer ' . $token,
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+
+		if ( 404 === $code || 410 === $code ) {
+			return new WP_Error(
+				'ebm_google_event_missing',
+				__( 'The saved Google event no longer exists on this calendar.', 'electrical-booking-manager' )
+			);
+		}
+
+		if ( $code >= 400 ) {
+			return new WP_Error(
+				'ebm_google_event_check',
+				self::error_message(
+					$response,
+					__( 'The saved Google event could not be checked.', 'electrical-booking-manager' )
+				)
+			);
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( ! is_array( $body ) || empty( $body['id'] ) ) {
+			return new WP_Error(
+				'ebm_google_event_bad_response',
+				__( 'Google returned an invalid event response.', 'electrical-booking-manager' )
+			);
+		}
+
+		return $body;
+	}
+
+	public static function event_exists( $event_id ) {
+		return ! is_wp_error( self::get_event( $event_id ) );
+	}
+
 	public static function create_event( $booking_id ) {
 		global $wpdb;
+
+		$booking_id = absint( $booking_id );
 
 		if ( ! self::connected() ) {
 			return '';
@@ -405,7 +482,7 @@ final class EBM_Google {
 				INNER JOIN ' . EBM_Helpers::table( 'jobs' ) . ' j ON j.id = b.job_id
 				INNER JOIN ' . EBM_Helpers::table( 'customers' ) . ' c ON c.id = b.customer_id
 				WHERE b.id = %d',
-				absint( $booking_id )
+				$booking_id
 			)
 		);
 
@@ -428,7 +505,7 @@ final class EBM_Google {
 
 		$event = array(
 			'summary'     => 'Booking: ' . $booking->job_title,
-			'description' => "Customer: {$booking->name}\nEmail: {$booking->email}\nPhone: {$booking->phone}\nAddress: {$booking->address}",
+			'description' => "Created by Electrical Booking Manager\nBooking ID: {$booking_id}\n\nCustomer: {$booking->name}\nEmail: {$booking->email}\nPhone: {$booking->phone}\nAddress: {$booking->address}",
 			'start'       => array(
 				'dateTime' => $start,
 				'timeZone' => self::google_timezone(),
@@ -436,6 +513,12 @@ final class EBM_Google {
 			'end'         => array(
 				'dateTime' => $end,
 				'timeZone' => self::google_timezone(),
+			),
+			'extendedProperties' => array(
+				'private' => array(
+					'ebm_booking_id' => (string) $booking_id,
+					'ebm_source'     => 'electrical_booking_manager',
+				),
 			),
 		);
 
@@ -451,14 +534,25 @@ final class EBM_Google {
 			)
 		);
 
+		if ( is_wp_error( $response ) ) {
+			return '';
+		}
+
+		if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
+			return '';
+		}
+
 		$body = json_decode( wp_remote_retrieve_body( $response ), true );
 
 		if ( ! empty( $body['id'] ) ) {
 			$wpdb->update(
 				EBM_Helpers::table( 'bookings' ),
-				array( 'google_event_id' => sanitize_text_field( $body['id'] ) ),
-				array( 'id' => absint( $booking_id ) ),
-				array( '%s' ),
+				array(
+					'google_event_id' => sanitize_text_field( $body['id'] ),
+					'updated_at'      => current_time( 'mysql' ),
+				),
+				array( 'id' => $booking_id ),
+				array( '%s', '%s' ),
 				array( '%d' )
 			);
 
@@ -505,5 +599,39 @@ final class EBM_Google {
 		self::clear_cache();
 
 		return in_array( wp_remote_retrieve_response_code( $response ), array( 200, 204, 404, 410 ), true );
+	}
+
+	public static function recreate_event( $booking_id ) {
+		global $wpdb;
+
+		$booking_id = absint( $booking_id );
+
+		$booking = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM ' . EBM_Helpers::table( 'bookings' ) . ' WHERE id = %d',
+				$booking_id
+			)
+		);
+
+		if ( ! $booking ) {
+			return '';
+		}
+
+		if ( ! empty( $booking->google_event_id ) ) {
+			self::delete_event( $booking->google_event_id );
+		}
+
+		$wpdb->update(
+			EBM_Helpers::table( 'bookings' ),
+			array(
+				'google_event_id' => '',
+				'updated_at'      => current_time( 'mysql' ),
+			),
+			array( 'id' => $booking_id ),
+			array( '%s', '%s' ),
+			array( '%d' )
+		);
+
+		return self::create_event( $booking_id );
 	}
 }

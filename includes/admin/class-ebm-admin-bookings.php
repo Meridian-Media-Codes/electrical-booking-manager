@@ -7,6 +7,7 @@ final class EBM_Admin_Bookings {
 	public static function init() {
 		add_action( 'admin_post_ebm_update_booking', array( __CLASS__, 'update' ) );
 		add_action( 'admin_post_ebm_delete_booking', array( __CLASS__, 'delete' ) );
+		add_action( 'admin_post_ebm_sync_booking_google', array( __CLASS__, 'sync_google' ) );
 	}
 
 	private static function statuses() {
@@ -39,6 +40,18 @@ final class EBM_Admin_Bookings {
 
 			<?php EBM_Admin_Notices::render(); ?>
 
+			<?php if ( isset( $_GET['google_synced'] ) ) : ?>
+				<div class="notice notice-success is-dismissible">
+					<p><?php esc_html_e( 'Booking was re-synced to Google Calendar.', 'electrical-booking-manager' ); ?></p>
+				</div>
+			<?php endif; ?>
+
+			<?php if ( isset( $_GET['google_failed'] ) ) : ?>
+				<div class="notice notice-error is-dismissible">
+					<p><?php esc_html_e( 'Google Calendar sync failed. Check the Google connection and calendar ID in settings.', 'electrical-booking-manager' ); ?></p>
+				</div>
+			<?php endif; ?>
+
 			<table class="widefat striped">
 				<thead>
 					<tr>
@@ -64,6 +77,7 @@ final class EBM_Admin_Bookings {
 						<?php
 						$date_value = mysql2date( 'Y-m-d', $booking->start_at, false );
 						$time_value = mysql2date( 'H:i', $booking->start_at, false );
+						$can_sync   = in_array( $booking->status, array( 'confirmed', 'completed' ), true );
 						?>
 						<tr>
 							<td><?php echo esc_html( $booking->id ); ?></td>
@@ -93,11 +107,23 @@ final class EBM_Admin_Bookings {
 
 							<td>
 								<?php if ( ! empty( $booking->google_event_id ) ) : ?>
-									<span style="color:#137333;"><?php esc_html_e( 'Linked', 'electrical-booking-manager' ); ?></span>
+									<span style="color:#137333;"><?php esc_html_e( 'Linked', 'electrical-booking-manager' ); ?></span><br>
+									<small><?php echo esc_html( substr( $booking->google_event_id, 0, 12 ) ); ?>...</small>
 								<?php elseif ( 'pending_payment' === $booking->status ) : ?>
 									<span style="color:#b54708;"><?php esc_html_e( 'Waiting for payment', 'electrical-booking-manager' ); ?></span>
 								<?php else : ?>
 									<span style="color:#646970;"><?php esc_html_e( 'Not linked', 'electrical-booking-manager' ); ?></span>
+								<?php endif; ?>
+
+								<?php if ( $can_sync ) : ?>
+									<br>
+									<a
+										class="button button-small"
+										style="margin-top:6px;"
+										href="<?php echo esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=ebm_sync_booking_google&booking_id=' . absint( $booking->id ) ), 'ebm_sync_booking_google_' . absint( $booking->id ) ) ); ?>"
+									>
+										<?php esc_html_e( 'Re-sync Google', 'electrical-booking-manager' ); ?>
+									</a>
 								<?php endif; ?>
 							</td>
 
@@ -135,6 +161,51 @@ final class EBM_Admin_Bookings {
 			</table>
 		</div>
 		<?php
+	}
+
+	public static function sync_google() {
+		EBM_Admin::cap();
+
+		$id = absint( $_GET['booking_id'] ?? 0 );
+
+		check_admin_referer( 'ebm_sync_booking_google_' . $id );
+
+		if ( ! $id ) {
+			wp_die( esc_html__( 'Invalid booking.', 'electrical-booking-manager' ) );
+		}
+
+		global $wpdb;
+
+		$booking = $wpdb->get_row(
+			$wpdb->prepare(
+				'SELECT * FROM ' . EBM_Helpers::table( 'bookings' ) . ' WHERE id = %d',
+				$id
+			)
+		);
+
+		if ( ! $booking ) {
+			wp_die( esc_html__( 'Booking not found.', 'electrical-booking-manager' ) );
+		}
+
+		if ( ! in_array( $booking->status, array( 'confirmed', 'completed' ), true ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=ebm-bookings&google_failed=1' ) );
+			exit;
+		}
+
+		if ( ! class_exists( 'EBM_Google' ) || ! EBM_Google::connected() || ! method_exists( 'EBM_Google', 'recreate_event' ) ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=ebm-bookings&google_failed=1' ) );
+			exit;
+		}
+
+		$event_id = EBM_Google::recreate_event( $id );
+
+		if ( $event_id ) {
+			wp_safe_redirect( admin_url( 'admin.php?page=ebm-bookings&google_synced=1' ) );
+			exit;
+		}
+
+		wp_safe_redirect( admin_url( 'admin.php?page=ebm-bookings&google_failed=1' ) );
+		exit;
 	}
 
 	public static function update() {
@@ -231,26 +302,11 @@ final class EBM_Admin_Bookings {
 					array( '%d' )
 				);
 			} elseif ( in_array( $status, array( 'confirmed', 'completed' ), true ) ) {
-				if ( $date_changed && ! empty( $booking->google_event_id ) && method_exists( 'EBM_Google', 'delete_event' ) ) {
-					EBM_Google::delete_event( $booking->google_event_id );
-
-					$wpdb->update(
-						EBM_Helpers::table( 'bookings' ),
-						array( 'google_event_id' => '' ),
-						array( 'id' => $id ),
-						array( '%s' ),
-						array( '%d' )
-					);
-				}
-
-				$fresh_booking = $wpdb->get_row(
-					$wpdb->prepare(
-						'SELECT * FROM ' . EBM_Helpers::table( 'bookings' ) . ' WHERE id = %d',
-						$id
-					)
-				);
-
-				if ( empty( $fresh_booking->google_event_id ) ) {
+				if ( method_exists( 'EBM_Google', 'recreate_event' ) ) {
+					if ( $date_changed || empty( $booking->google_event_id ) || ! EBM_Google::event_exists( $booking->google_event_id ) ) {
+						EBM_Google::recreate_event( $id );
+					}
+				} elseif ( empty( $booking->google_event_id ) ) {
 					EBM_Google::create_event( $id );
 				}
 			}
