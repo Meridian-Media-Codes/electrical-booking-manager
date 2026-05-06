@@ -434,67 +434,65 @@
 		}
 	}
 
-	function renderAddons(app, state, target, addons) {
-		target.innerHTML = '';
+function renderAddons(app, state, target, addons) {
+	target.innerHTML = '';
 
-		if (!addons.length) {
-			target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this job.</div>';
-			return;
-		}
-
-		addons.forEach(function (addon) {
-			const min = Number(addon.min_qty || 0);
-			const max = Number(addon.max_qty || 10);
-
-			const card = document.createElement('div');
-			card.className = 'ebm-addon-card';
-			card.innerHTML = `
-				<div class="ebm-addon-inner">
-					<div>
-						<span class="ebm-addon-title">${escapeHtml(addon.title || 'Add-on')}</span>
-						${addon.description ? `<div class="ebm-addon-description">${escapeHtml(addon.description)}</div>` : ''}
-						<span class="ebm-addon-meta">${durationLabel(addon.extra_duration_minutes || 0)} per item</span>
-					</div>
-					<div class="ebm-addon-qty">
-						<label>
-							Qty
-							<input type="number" min="${min}" max="${max}" value="${min}" data-addon-id="${addon.id}">
-						</label>
-					</div>
-				</div>
-			`;
-
-			const input = qs('input', card);
-
-			input.addEventListener('change', function () {
-				let value = Number(input.value || 0);
-				value = Math.max(min, Math.min(max, value));
-				input.value = String(value);
-
-				if (value > 0) {
-					state.addons[addon.id] = value;
-					card.classList.add('is-selected');
-				} else {
-					delete state.addons[addon.id];
-					card.classList.remove('is-selected');
-				}
-
-				state.date = '';
-				state.time = '';
-				state.slots = [];
-				state.quote = null;
-				state.voucherCode = '';
-
-				cache.months = {};
-				cache.slots = {};
-				cache.quotes = {};
-
-				preloadInitialAvailability(state);
-			});
-
-			target.appendChild(card);
-		});
+	if (!addons.length) {
+		target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this job.</div>';
+		return;
 	}
+
+	addons.forEach(function (addon) {
+		const min = Number(addon.min_qty || 0);
+		const max = Number(addon.max_qty || 10);
+
+		const card = document.createElement('div');
+		card.className = 'ebm-addon-card';
+
+		card.innerHTML = `
+			<div class="ebm-addon-inner ebm-addon-inner-compact">
+				<div class="ebm-addon-main">
+					<span class="ebm-addon-title">${escapeHtml(addon.title || 'Add-on')}</span>
+					${addon.description ? `<div class="ebm-addon-description">${escapeHtml(addon.description)}</div>` : ''}
+				</div>
+				<div class="ebm-addon-qty ebm-addon-qty-inline">
+					<label for="ebm-addon-${addon.id}">Qty</label>
+					<input id="ebm-addon-${addon.id}" type="number" min="${min}" max="${max}" value="${min}" data-addon-id="${addon.id}">
+				</div>
+			</div>
+		`;
+
+		const input = qs('input', card);
+
+		input.addEventListener('change', function () {
+			let value = Number(input.value || 0);
+			value = Math.max(min, Math.min(max, value));
+			input.value = String(value);
+
+			if (value > 0) {
+				state.addons[addon.id] = value;
+				card.classList.add('is-selected');
+			} else {
+				delete state.addons[addon.id];
+				card.classList.remove('is-selected');
+			}
+
+			state.date = '';
+			state.time = '';
+			state.slots = [];
+			state.quote = null;
+			state.voucherCode = '';
+
+			cache.months = {};
+			cache.slots = {};
+			cache.quotes = {};
+
+			preloadInitialAvailability(state);
+		});
+
+		target.appendChild(card);
+	});
+}
 
 	async function loadSlots(app, state) {
 		const target = qs('[data-ebm-slots]', app);
