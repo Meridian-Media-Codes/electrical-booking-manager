@@ -1559,3 +1559,37 @@ body:has(.ebm-calendar-popover.is-open) .wp-site-blocks > footer {
 		line-height: 1.45;
 	}
 }
+
+/* Remove service letter circles and soften add-on text */
+
+.ebm-job-card.ebm-job-card-rich {
+	display: block !important;
+	grid-template-columns: none !important;
+	min-height: 132px;
+}
+
+.ebm-job-card-media {
+	display: none !important;
+}
+
+.ebm-job-card-content {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.ebm-addon-title {
+	font-weight: 650 !important;
+}
+
+.ebm-addon-card {
+	font-weight: 500;
+}
+
+.ebm-addon-qty.ebm-addon-qty-inline label {
+	font-weight: 650 !important;
+}
+
+.ebm-addon-qty.ebm-addon-qty-inline input {
+	font-weight: 700 !important;
+}

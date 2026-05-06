@@ -324,60 +324,58 @@
 		return `${prefix}:${JSON.stringify(data)}`;
 	}
 
-function renderJobs(app, state, target, jobs) {
-	target.innerHTML = '';
+	function renderJobs(app, state, target, jobs) {
+		target.innerHTML = '';
 
-	if (!jobs.length) {
-		target.innerHTML = '<div class="ebm-empty">No services are available yet.</div>';
-		return;
-	}
+		if (!jobs.length) {
+			target.innerHTML = '<div class="ebm-empty">No services are available yet.</div>';
+			return;
+		}
 
-	jobs.forEach(function (job) {
-		const button = document.createElement('button');
-		button.type = 'button';
-		button.className = 'ebm-job-card ebm-job-card-rich';
-		button.dataset.jobId = job.id;
+		jobs.forEach(function (job) {
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = 'ebm-job-card ebm-job-card-rich';
+			button.dataset.jobId = job.id;
 
-		const title = escapeHtml(job.title || 'Service');
-		const description = escapeHtml(job.description || 'Choose this service to continue.');
-		const iconLetter = escapeHtml((job.title || 'S').trim().charAt(0).toUpperCase());
+			const title = escapeHtml(job.title || 'Service');
+			const description = escapeHtml(job.description || 'Choose this service to continue.');
 
-		button.innerHTML = `
-			<span class="ebm-job-card-media" aria-hidden="true">${iconLetter}</span>
-			<span class="ebm-job-card-content">
-				<span class="ebm-job-title">${title}</span>
-				<span class="ebm-job-description">${description}</span>
-			</span>
-		`;
+			button.innerHTML = `
+				<span class="ebm-job-card-content">
+					<span class="ebm-job-title">${title}</span>
+					<span class="ebm-job-description">${description}</span>
+				</span>
+			`;
 
-		button.addEventListener('click', async function () {
-			state.jobId = Number(job.id);
-			state.addons = {};
-			state.date = '';
-			state.time = '';
-			state.slots = [];
-			state.quote = null;
-			state.voucherCode = '';
+			button.addEventListener('click', async function () {
+				state.jobId = Number(job.id);
+				state.addons = {};
+				state.date = '';
+				state.time = '';
+				state.slots = [];
+				state.quote = null;
+				state.voucherCode = '';
 
-			cache.months = {};
+				cache.months = {};
 
-			qsa('.ebm-job-card', target).forEach(function (card) {
-				card.classList.remove('is-selected');
-				card.setAttribute('aria-pressed', 'false');
+				qsa('.ebm-job-card', target).forEach(function (card) {
+					card.classList.remove('is-selected');
+					card.setAttribute('aria-pressed', 'false');
+				});
+
+				button.classList.add('is-selected');
+				button.setAttribute('aria-pressed', 'true');
+
+				clearMessage(app);
+				await loadAddons(app, state);
+				preloadInitialAvailability(state);
+				goToStep(app, state, 2);
 			});
 
-			button.classList.add('is-selected');
-			button.setAttribute('aria-pressed', 'true');
-
-			clearMessage(app);
-			await loadAddons(app, state);
-			preloadInitialAvailability(state);
-			goToStep(app, state, 2);
+			target.appendChild(button);
 		});
-
-		target.appendChild(button);
-	});
-}
+	}
 
 	async function loadJobs(app, state, target) {
 		const preloaded = config().preloadedJobs;
