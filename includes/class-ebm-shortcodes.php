@@ -32,10 +32,10 @@ final class EBM_Shortcodes {
 		$jobs_table = EBM_Helpers::table( 'jobs' );
 
 		$rows = $wpdb->get_results(
-			"SELECT id, title, description, duration_minutes
+			"SELECT id, title, description, addons_intro, duration_minutes
 			FROM $jobs_table
 			WHERE is_active = 1
-			ORDER BY title ASC"
+			ORDER BY sort_order ASC, title ASC"
 		);
 
 		$jobs = array();
@@ -45,6 +45,7 @@ final class EBM_Shortcodes {
 				'id'               => absint( $row->id ),
 				'title'            => sanitize_text_field( $row->title ),
 				'description'      => sanitize_textarea_field( $row->description ),
+				'addons_intro'     => sanitize_textarea_field( $row->addons_intro ?? '' ),
 				'duration_minutes' => absint( $row->duration_minutes ),
 			);
 		}

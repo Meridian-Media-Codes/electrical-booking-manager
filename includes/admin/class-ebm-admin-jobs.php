@@ -881,6 +881,8 @@ final class EBM_Admin_Jobs {
 			$job_id = (int) $wpdb->insert_id;
 		}
 
+		delete_transient( 'ebm_frontend_jobs_' . md5( get_locale() ) );
+
 		wp_safe_redirect( admin_url( 'admin.php?page=ebm-jobs&job_id=' . absint( $job_id ) . '&updated=1' ) );
 		exit;
 	}
