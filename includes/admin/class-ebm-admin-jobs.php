@@ -51,7 +51,7 @@ final class EBM_Admin_Jobs {
 		if ( $selected_job ) {
 			$addons = $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT * FROM $addons_table WHERE job_id = %d ORDER BY sort_order ASC, is_active DESC, title ASC",
+					"SELECT * FROM $addons_table WHERE job_id = %d ORDER BY category ASC, sort_order ASC, is_active DESC, title ASC",
 					$selected_job_id
 				)
 			);
@@ -291,6 +291,11 @@ final class EBM_Admin_Jobs {
 		$addon_duration         = EBM_Admin::split_minutes_to_best_unit( $extra_duration_minutes );
 		$form_class             = $is_new ? 'ebm-extra-card ebm-extra-card-new' : 'ebm-extra-card';
 		$draggable              = $is_new ? '' : ' data-addon-id="' . esc_attr( $addon_id ) . '" draggable="true"';
+		$category               = sanitize_text_field( $addon->category ?? '' );
+
+		if ( '' === $category ) {
+			$category = __( 'Other extras', 'electrical-booking-manager' );
+		}
 		?>
 		<form class="<?php echo esc_attr( $form_class ); ?>" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>"<?php echo $draggable; ?>>
 			<input type="hidden" name="action" value="ebm_save_addon">
@@ -308,6 +313,8 @@ final class EBM_Admin_Jobs {
 							<div class="ebm-extra-summary-copy">
 								<strong class="ebm-extra-summary-title"><?php echo esc_html( $addon->title ); ?></strong>
 								<span class="ebm-extra-summary-meta">
+									<?php echo esc_html( $category ); ?>
+									·
 									<?php echo esc_html( EBM_Helpers::money( $addon->price ) ); ?>
 									·
 									<?php echo esc_html( EBM_Admin::format_duration( $addon->extra_duration_minutes ) ); ?>
@@ -336,6 +343,22 @@ final class EBM_Admin_Jobs {
 								<?php esc_html_e( 'Extra name', 'electrical-booking-manager' ); ?>
 							</label>
 							<input id="ebm-addon-title-<?php echo esc_attr( $addon_id ); ?>" type="text" name="title" required value="<?php echo esc_attr( $addon->title ?? '' ); ?>" placeholder="<?php esc_attr_e( 'Smart switch upgrade', 'electrical-booking-manager' ); ?>">
+						</div>
+
+						<div class="ebm-field">
+							<label for="ebm-addon-category-<?php echo esc_attr( $addon_id ); ?>">
+								<?php esc_html_e( 'Category', 'electrical-booking-manager' ); ?>
+							</label>
+							<input id="ebm-addon-category-<?php echo esc_attr( $addon_id ); ?>" type="text" name="category" value="<?php echo esc_attr( $category ); ?>" placeholder="<?php esc_attr_e( 'Lighting', 'electrical-booking-manager' ); ?>" list="ebm-addon-category-options">
+
+							<datalist id="ebm-addon-category-options">
+								<option value="Lighting">
+								<option value="Sockets">
+								<option value="Cookers and ovens">
+								<option value="External power">
+								<option value="Smoke, alarms and safety">
+								<option value="Other extras">
+							</datalist>
 						</div>
 
 						<div class="ebm-field ebm-field-description">
@@ -418,6 +441,8 @@ final class EBM_Admin_Jobs {
 			EBM_Helpers::table( 'addons' ),
 			"SELECT id FROM " . EBM_Helpers::table( 'addons' ) . " ORDER BY job_id ASC, title ASC"
 		);
+
+		self::maybe_add_addon_category_column();
 	}
 
 	private static function maybe_add_sort_order_column( $table, $select_sql ) {
@@ -450,6 +475,24 @@ final class EBM_Admin_Jobs {
 
 			$order += 10;
 		}
+	}
+
+	private static function maybe_add_addon_category_column() {
+		global $wpdb;
+
+		$table  = EBM_Helpers::table( 'addons' );
+		$column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SHOW COLUMNS FROM $table LIKE %s",
+				'category'
+			)
+		);
+
+		if ( $column ) {
+			return;
+		}
+
+		$wpdb->query( "ALTER TABLE $table ADD category VARCHAR(120) NOT NULL DEFAULT 'Other extras' AFTER extra_duration_minutes" );
 	}
 
 	public static function reorder_jobs() {
@@ -886,9 +929,14 @@ final class EBM_Admin_Jobs {
 
 		global $wpdb;
 
-		$now    = current_time( 'mysql' );
-		$job_id = absint( $_POST['job_id'] ?? 0 );
-		$title  = sanitize_text_field( wp_unslash( $_POST['title'] ?? '' ) );
+		$now      = current_time( 'mysql' );
+		$job_id   = absint( $_POST['job_id'] ?? 0 );
+		$title    = sanitize_text_field( wp_unslash( $_POST['title'] ?? '' ) );
+		$category = sanitize_text_field( wp_unslash( $_POST['category'] ?? '' ) );
+
+		if ( '' === $category ) {
+			$category = __( 'Other extras', 'electrical-booking-manager' );
+		}
 
 		if ( ! $job_id || '' === $title ) {
 			wp_die( esc_html__( 'A service and extra name are required.', 'electrical-booking-manager' ) );
@@ -909,6 +957,7 @@ final class EBM_Admin_Jobs {
 		$data = array(
 			'job_id'                 => $job_id,
 			'title'                  => $title,
+			'category'               => $category,
 			'description'            => sanitize_textarea_field( wp_unslash( $_POST['description'] ?? '' ) ),
 			'price'                  => (float) ( $_POST['price'] ?? 0 ),
 			'min_qty'                => $min_qty,
@@ -923,7 +972,7 @@ final class EBM_Admin_Jobs {
 				EBM_Helpers::table( 'addons' ),
 				$data,
 				array( 'id' => $id ),
-				array( '%d', '%s', '%s', '%f', '%d', '%d', '%d', '%d', '%s' ),
+				array( '%d', '%s', '%s', '%s', '%f', '%d', '%d', '%d', '%d', '%s' ),
 				array( '%d' )
 			);
 		} else {
@@ -936,7 +985,7 @@ final class EBM_Admin_Jobs {
 			$wpdb->insert(
 				EBM_Helpers::table( 'addons' ),
 				$data,
-				array( '%d', '%s', '%s', '%f', '%d', '%d', '%d', '%d', '%s', '%d', '%s' )
+				array( '%d', '%s', '%s', '%s', '%f', '%d', '%d', '%d', '%d', '%s', '%d', '%s' )
 			);
 		}
 

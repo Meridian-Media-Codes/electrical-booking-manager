@@ -1593,3 +1593,175 @@ body:has(.ebm-calendar-popover.is-open) .wp-site-blocks > footer {
 .ebm-addon-qty.ebm-addon-qty-inline input {
 	font-weight: 700 !important;
 }
+
+/* Add-on category dropdowns */
+
+.ebm-addon-intro {
+	margin: 0 0 16px !important;
+	color: var(--ebm-muted) !important;
+	font-size: 15px !important;
+	line-height: 1.5 !important;
+	font-weight: 650;
+}
+
+.ebm-addon-group {
+	border: 1px solid var(--ebm-line);
+	border-radius: var(--ebm-radius-lg);
+	background: #ffffff;
+	overflow: hidden;
+	margin: 0 0 14px;
+	box-shadow: none;
+}
+
+.ebm-addon-group[open] {
+	border-color: var(--ebm-line-strong);
+	background: #ffffff;
+}
+
+.ebm-addon-group-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 16px 18px;
+	cursor: pointer;
+	list-style: none;
+	background: #f7f9fc;
+	color: var(--ebm-text);
+	font-size: 16px;
+	font-weight: 850;
+	line-height: 1.25;
+}
+
+.ebm-addon-group-header::-webkit-details-marker {
+	display: none;
+}
+
+.ebm-addon-group-header::after {
+	content: "⌄";
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	min-width: 28px;
+	border-radius: 999px;
+	background: #ffffff;
+	border: 1px solid var(--ebm-line);
+	color: var(--ebm-muted);
+	font-size: 18px;
+	font-weight: 900;
+	line-height: 1;
+	transition: transform 0.18s ease;
+}
+
+.ebm-addon-group[open] .ebm-addon-group-header::after {
+	transform: rotate(180deg);
+}
+
+.ebm-addon-group-title {
+	display: block;
+	font-size: 17px;
+	font-weight: 900;
+	color: var(--ebm-text);
+}
+
+.ebm-addon-group-summary {
+	margin-left: auto;
+	padding: 5px 10px;
+	border-radius: 999px;
+	background: #eef2f7;
+	color: var(--ebm-muted);
+	font-size: 13px;
+	font-weight: 850;
+	white-space: nowrap;
+}
+
+.ebm-addon-group-summary.has-selected {
+	background: #fff7ed;
+	color: var(--ebm-orange-dark);
+}
+
+.ebm-addon-group-body {
+	display: grid;
+	gap: 10px;
+	padding: 14px;
+	background: #ffffff;
+}
+
+.ebm-addon-group-body .ebm-addon-card {
+	margin: 0;
+	padding: 14px 16px;
+	border-radius: 14px;
+}
+
+.ebm-addon-group-body .ebm-addon-title {
+	font-size: 16px;
+	font-weight: 700;
+	line-height: 1.25;
+}
+
+.ebm-addon-group-body .ebm-addon-description {
+	margin-top: 4px;
+	font-size: 14px;
+	line-height: 1.4;
+}
+
+.ebm-addon-group-body .ebm-addon-inner-compact {
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 14px;
+}
+
+.ebm-addon-group-body .ebm-addon-qty-inline {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	white-space: nowrap;
+}
+
+.ebm-addon-group-body .ebm-addon-qty-inline label {
+	margin: 0;
+	font-size: 13px;
+	font-weight: 750;
+	color: var(--ebm-muted);
+}
+
+.ebm-addon-group-body .ebm-addon-qty-inline input {
+	width: 72px;
+	min-height: 42px;
+	height: 42px;
+	padding: 8px 10px;
+	text-align: center;
+}
+
+@media (max-width: 640px) {
+	.ebm-addon-group-header {
+		align-items: flex-start;
+		flex-wrap: wrap;
+		padding: 15px 16px;
+	}
+
+	.ebm-addon-group-summary {
+		margin-left: 0;
+	}
+
+	.ebm-addon-group-header::after {
+		margin-left: auto;
+	}
+
+	.ebm-addon-group-body {
+		padding: 12px;
+	}
+
+	.ebm-addon-group-body .ebm-addon-inner-compact {
+		grid-template-columns: 1fr;
+	}
+
+	.ebm-addon-group-body .ebm-addon-qty-inline {
+		justify-content: flex-start;
+	}
+
+	.ebm-addon-group-body .ebm-addon-qty-inline input {
+		width: 90px;
+	}
+}

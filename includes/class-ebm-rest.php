@@ -100,6 +100,24 @@ final class EBM_REST {
 		return (bool) wp_verify_nonce( $request->get_header( 'X-WP-Nonce' ), 'wp_rest' );
 	}
 
+	private static function maybe_add_addon_category_column() {
+		global $wpdb;
+
+		$table  = EBM_Helpers::table( 'addons' );
+		$column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SHOW COLUMNS FROM $table LIKE %s",
+				'category'
+			)
+		);
+
+		if ( $column ) {
+			return;
+		}
+
+		$wpdb->query( "ALTER TABLE $table ADD category VARCHAR(120) NOT NULL DEFAULT 'Other extras' AFTER extra_duration_minutes" );
+	}
+
 	private static function normalise_uk_postcode( $postcode ) {
 		$postcode = strtoupper( sanitize_text_field( wp_unslash( $postcode ) ) );
 		$postcode = preg_replace( '/\s+/', '', $postcode );
@@ -305,16 +323,18 @@ final class EBM_REST {
 			);
 		}
 
+		self::maybe_add_addon_category_column();
+
 		$addons_table = EBM_Helpers::table( 'addons' );
 
 		return array(
 			'addons' => $wpdb->get_results(
 				$wpdb->prepare(
-					"SELECT id, title, description, min_qty, max_qty, extra_duration_minutes
+					"SELECT id, title, description, category, min_qty, max_qty, extra_duration_minutes
 					FROM $addons_table
 					WHERE job_id = %d
 					AND is_active = 1
-					ORDER BY sort_order ASC, title ASC",
+					ORDER BY category ASC, sort_order ASC, title ASC",
 					$job_id
 				)
 			),

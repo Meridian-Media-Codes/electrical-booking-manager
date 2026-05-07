@@ -402,7 +402,7 @@
 			return;
 		}
 
-		target.innerHTML = '<div class="ebm-loading">Loading jobs...</div>';
+		target.innerHTML = '<div class="ebm-loading">Loading services...</div>';
 
 		try {
 			const response = await api('jobs');
@@ -440,65 +440,134 @@
 		}
 	}
 
-function renderAddons(app, state, target, addons) {
-	target.innerHTML = '';
-
-	if (!addons.length) {
-		target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this job.</div>';
-		return;
+	function addonCategory(addon) {
+		const category = String(addon.category || '').trim();
+		return category || 'Other extras';
 	}
 
-	addons.forEach(function (addon) {
-		const min = Number(addon.min_qty || 0);
-		const max = Number(addon.max_qty || 10);
+	function updateAddonGroupSummary(group) {
+		const summary = qs('[data-ebm-addon-group-summary]', group);
+		const inputs = qsa('input[data-addon-id]', group);
+		let selected = 0;
 
-		const card = document.createElement('div');
-		card.className = 'ebm-addon-card';
-
-		card.innerHTML = `
-			<div class="ebm-addon-inner ebm-addon-inner-compact">
-				<div class="ebm-addon-main">
-					<span class="ebm-addon-title">${escapeHtml(addon.title || 'Add-on')}</span>
-					${addon.description ? `<div class="ebm-addon-description">${escapeHtml(addon.description)}</div>` : ''}
-				</div>
-				<div class="ebm-addon-qty ebm-addon-qty-inline">
-					<label for="ebm-addon-${addon.id}">Qty</label>
-					<input id="ebm-addon-${addon.id}" type="number" min="${min}" max="${max}" value="${min}" data-addon-id="${addon.id}">
-				</div>
-			</div>
-		`;
-
-		const input = qs('input', card);
-
-		input.addEventListener('change', function () {
-			let value = Number(input.value || 0);
-			value = Math.max(min, Math.min(max, value));
-			input.value = String(value);
-
-			if (value > 0) {
-				state.addons[addon.id] = value;
-				card.classList.add('is-selected');
-			} else {
-				delete state.addons[addon.id];
-				card.classList.remove('is-selected');
-			}
-
-			state.date = '';
-			state.time = '';
-			state.slots = [];
-			state.quote = null;
-			state.voucherCode = '';
-
-			cache.months = {};
-			cache.slots = {};
-			cache.quotes = {};
-
-			preloadInitialAvailability(state);
+		inputs.forEach(function (input) {
+			selected += Number(input.value || 0);
 		});
 
-		target.appendChild(card);
-	});
-}
+		if (!summary) {
+			return;
+		}
+
+		summary.textContent = selected > 0 ? `${selected} selected` : `${inputs.length} options`;
+		summary.classList.toggle('has-selected', selected > 0);
+	}
+
+	function renderAddons(app, state, target, addons) {
+		target.innerHTML = '';
+
+		if (!addons.length) {
+			target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this service.</div>';
+			return;
+		}
+
+		const intro = document.createElement('p');
+		intro.className = 'ebm-addon-intro';
+		intro.textContent = 'Only choose the extras you need. You can leave this step blank and continue.';
+		target.appendChild(intro);
+
+		const groups = new Map();
+
+		addons.forEach(function (addon) {
+			const category = addonCategory(addon);
+
+			if (!groups.has(category)) {
+				groups.set(category, []);
+			}
+
+			groups.get(category).push(addon);
+		});
+
+		let groupIndex = 0;
+
+		groups.forEach(function (items, category) {
+			const details = document.createElement('details');
+			details.className = 'ebm-addon-group';
+			details.open = groupIndex === 0;
+
+			const summary = document.createElement('summary');
+			summary.className = 'ebm-addon-group-header';
+			summary.innerHTML = `
+				<span class="ebm-addon-group-title">${escapeHtml(category)}</span>
+				<span class="ebm-addon-group-summary" data-ebm-addon-group-summary>${items.length} options</span>
+			`;
+			details.appendChild(summary);
+
+			const list = document.createElement('div');
+			list.className = 'ebm-addon-group-body';
+			details.appendChild(list);
+
+			items.forEach(function (addon) {
+				const min = Number(addon.min_qty || 0);
+				const max = Number(addon.max_qty || 10);
+				const current = Number(state.addons[addon.id] || min);
+
+				const card = document.createElement('div');
+				card.className = 'ebm-addon-card';
+
+				if (current > 0) {
+					card.classList.add('is-selected');
+				}
+
+				card.innerHTML = `
+					<div class="ebm-addon-inner ebm-addon-inner-compact">
+						<div class="ebm-addon-main">
+							<span class="ebm-addon-title">${escapeHtml(addon.title || 'Add-on')}</span>
+							${addon.description ? `<div class="ebm-addon-description">${escapeHtml(addon.description)}</div>` : ''}
+						</div>
+						<div class="ebm-addon-qty ebm-addon-qty-inline">
+							<label for="ebm-addon-${addon.id}">Qty</label>
+							<input id="ebm-addon-${addon.id}" type="number" min="${min}" max="${max}" value="${current}" data-addon-id="${addon.id}">
+						</div>
+					</div>
+				`;
+
+				const input = qs('input', card);
+
+				input.addEventListener('change', function () {
+					let value = Number(input.value || 0);
+					value = Math.max(min, Math.min(max, value));
+					input.value = String(value);
+
+					if (value > 0) {
+						state.addons[addon.id] = value;
+						card.classList.add('is-selected');
+					} else {
+						delete state.addons[addon.id];
+						card.classList.remove('is-selected');
+					}
+
+					state.date = '';
+					state.time = '';
+					state.slots = [];
+					state.quote = null;
+					state.voucherCode = '';
+
+					cache.months = {};
+					cache.slots = {};
+					cache.quotes = {};
+
+					updateAddonGroupSummary(details);
+					preloadInitialAvailability(state);
+				});
+
+				list.appendChild(card);
+			});
+
+			updateAddonGroupSummary(details);
+			target.appendChild(details);
+			groupIndex += 1;
+		});
+	}
 
 	async function loadSlots(app, state) {
 		const target = qs('[data-ebm-slots]', app);
@@ -1450,8 +1519,7 @@ function renderAddons(app, state, target, addons) {
 		jobList.dataset.ebmJobs = '';
 		jobs.appendChild(jobList);
 
-		const addons = screen(2, 'Choose add-ons');
-		addons.innerHTML += '<p></p>';
+		const addons = screen(2, 'Choose any extras');
 
 		const addonList = document.createElement('div');
 		addonList.className = 'ebm-addon-list';
