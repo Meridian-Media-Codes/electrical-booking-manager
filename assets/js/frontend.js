@@ -502,7 +502,7 @@
 		groups.forEach(function (items, category) {
 			const details = document.createElement('details');
 			details.className = 'ebm-addon-group';
-			details.open = groupIndex === 0;
+			details.open = false;
 
 			const summary = document.createElement('summary');
 			summary.className = 'ebm-addon-group-header';
