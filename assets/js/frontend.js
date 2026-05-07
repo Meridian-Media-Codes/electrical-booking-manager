@@ -188,6 +188,7 @@
 		return {
 			step: 1,
 			jobId: null,
+			selectedJob: null,
 			addons: {},
 			date: '',
 			time: '',
@@ -350,6 +351,7 @@
 
 			button.addEventListener('click', async function () {
 				state.jobId = Number(job.id);
+				state.selectedJob = job;
 				state.addons = {};
 				state.date = '';
 				state.time = '';
@@ -421,6 +423,19 @@
 			return;
 		}
 
+		const heading = qs('.ebm-step-screen[data-step="2"] h2', app);
+		const intro = qs('[data-ebm-addons-intro]', app);
+
+		if (state.selectedJob) {
+			if (heading) {
+				heading.textContent = state.selectedJob.title || 'Choose any extras';
+			}
+
+			if (intro) {
+				intro.textContent = state.selectedJob.addons_intro || 'Only choose the extras you need. You can leave this step blank and continue.';
+			}
+		}
+
 		const key = String(state.jobId);
 
 		if (cache.addons[key]) {
@@ -469,11 +484,6 @@
 			target.innerHTML = '<div class="ebm-empty">No add-ons are needed for this service.</div>';
 			return;
 		}
-
-		const intro = document.createElement('p');
-		intro.className = 'ebm-addon-intro';
-		intro.textContent = 'Only choose the extras you need. You can leave this step blank and continue.';
-		target.appendChild(intro);
 
 		const groups = new Map();
 
@@ -1520,6 +1530,12 @@
 		jobs.appendChild(jobList);
 
 		const addons = screen(2, 'Choose any extras');
+
+		const addonIntro = document.createElement('p');
+		addonIntro.className = 'ebm-addons-intro';
+		addonIntro.dataset.ebmAddonsIntro = '';
+		addonIntro.textContent = 'Only choose the extras you need. You can leave this step blank and continue.';
+		addons.appendChild(addonIntro);
 
 		const addonList = document.createElement('div');
 		addonList.className = 'ebm-addon-list';

@@ -100,6 +100,24 @@ final class EBM_REST {
 		return (bool) wp_verify_nonce( $request->get_header( 'X-WP-Nonce' ), 'wp_rest' );
 	}
 
+	private static function maybe_add_job_addons_intro_column() {
+		global $wpdb;
+
+		$table  = EBM_Helpers::table( 'jobs' );
+		$column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SHOW COLUMNS FROM $table LIKE %s",
+				'addons_intro'
+			)
+		);
+
+		if ( $column ) {
+			return;
+		}
+
+		$wpdb->query( "ALTER TABLE $table ADD addons_intro LONGTEXT NULL AFTER description" );
+	}
+
 	private static function maybe_add_addon_category_column() {
 		global $wpdb;
 
@@ -295,11 +313,13 @@ final class EBM_REST {
 	public static function jobs() {
 		global $wpdb;
 
+		self::maybe_add_job_addons_intro_column();
+
 		$jobs_table = EBM_Helpers::table( 'jobs' );
 
 		return array(
 			'jobs' => $wpdb->get_results(
-				"SELECT id, title, description, duration_minutes, custom_fields
+				"SELECT id, title, description, addons_intro, duration_minutes, custom_fields
 				FROM $jobs_table
 				WHERE is_active = 1
 				ORDER BY sort_order ASC, title ASC"

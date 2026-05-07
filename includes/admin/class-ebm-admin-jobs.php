@@ -170,6 +170,14 @@ final class EBM_Admin_Jobs {
 							<textarea id="ebm-job-description" name="description" rows="5"><?php echo esc_textarea( $job->description ?? '' ); ?></textarea>
 						</div>
 
+						<div class="ebm-field ebm-full">
+							<label for="ebm-job-addons-intro"><?php esc_html_e( 'Extras page description', 'electrical-booking-manager' ); ?></label>
+							<textarea id="ebm-job-addons-intro" name="addons_intro" rows="4" placeholder="<?php esc_attr_e( 'Tell the customer what this service includes and how to choose extras.', 'electrical-booking-manager' ); ?>"><?php echo esc_textarea( $job->addons_intro ?? '' ); ?></textarea>
+							<p class="description">
+								<?php esc_html_e( 'This appears under the service name on step 2 of the booking form. Leave it blank to use the default message.', 'electrical-booking-manager' ); ?>
+							</p>
+						</div>
+
 						<div class="ebm-field">
 							<label for="ebm-job-price"><?php esc_html_e( 'Base price', 'electrical-booking-manager' ); ?></label>
 							<input id="ebm-job-price" type="number" step="0.01" min="0" name="price" value="<?php echo esc_attr( $job->price ?? '0.00' ); ?>">
@@ -442,6 +450,7 @@ final class EBM_Admin_Jobs {
 			"SELECT id FROM " . EBM_Helpers::table( 'addons' ) . " ORDER BY job_id ASC, title ASC"
 		);
 
+		self::maybe_add_job_addons_intro_column();
 		self::maybe_add_addon_category_column();
 	}
 
@@ -475,6 +484,24 @@ final class EBM_Admin_Jobs {
 
 			$order += 10;
 		}
+	}
+
+	private static function maybe_add_job_addons_intro_column() {
+		global $wpdb;
+
+		$table  = EBM_Helpers::table( 'jobs' );
+		$column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SHOW COLUMNS FROM $table LIKE %s",
+				'addons_intro'
+			)
+		);
+
+		if ( $column ) {
+			return;
+		}
+
+		$wpdb->query( "ALTER TABLE $table ADD addons_intro LONGTEXT NULL AFTER description" );
 	}
 
 	private static function maybe_add_addon_category_column() {
@@ -817,6 +844,7 @@ final class EBM_Admin_Jobs {
 		$data = array(
 			'title'            => sanitize_text_field( wp_unslash( $_POST['title'] ?? '' ) ),
 			'description'      => sanitize_textarea_field( wp_unslash( $_POST['description'] ?? '' ) ),
+			'addons_intro'     => sanitize_textarea_field( wp_unslash( $_POST['addons_intro'] ?? '' ) ),
 			'price'            => (float) ( $_POST['price'] ?? 0 ),
 			'duration_minutes' => $duration_minutes,
 			'deposit_type'     => $deposit_type,
@@ -835,7 +863,7 @@ final class EBM_Admin_Jobs {
 				EBM_Helpers::table( 'jobs' ),
 				$data,
 				array( 'id' => $id ),
-				array( '%s', '%s', '%f', '%d', '%s', '%f', '%d', '%d', '%s' ),
+				array( '%s', '%s', '%s', '%f', '%d', '%s', '%f', '%d', '%d', '%s' ),
 				array( '%d' )
 			);
 
@@ -847,7 +875,7 @@ final class EBM_Admin_Jobs {
 			$wpdb->insert(
 				EBM_Helpers::table( 'jobs' ),
 				$data,
-				array( '%s', '%s', '%f', '%d', '%s', '%f', '%d', '%d', '%s', '%d', '%s' )
+				array( '%s', '%s', '%s', '%f', '%d', '%s', '%f', '%d', '%d', '%s', '%d', '%s' )
 			);
 
 			$job_id = (int) $wpdb->insert_id;
