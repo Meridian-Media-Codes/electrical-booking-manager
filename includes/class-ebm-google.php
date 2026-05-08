@@ -56,6 +56,41 @@ final class EBM_Google {
 		return $date->setTimezone( new DateTimeZone( 'UTC' ) )->format( 'Y-m-d\TH:i:s\Z' );
 	}
 
+	private static function plain_text( $value ) {
+		return trim( wp_strip_all_tags( (string) $value ) );
+	}
+
+	private static function money( $amount ) {
+		if ( class_exists( 'EBM_Helpers' ) && method_exists( 'EBM_Helpers', 'money' ) ) {
+			return EBM_Helpers::money( $amount );
+		}
+
+		return '£' . number_format_i18n( (float) $amount, 2 );
+	}
+
+	private static function status_label( $status ) {
+		return ucwords( str_replace( '_', ' ', sanitize_text_field( $status ) ) );
+	}
+
+	private static function schedule_line( $start_at, $end_at ) {
+		$start_ts = strtotime( (string) $start_at );
+		$end_ts   = strtotime( (string) $end_at );
+
+		if ( ! $start_ts ) {
+			return '';
+		}
+
+		$date = wp_date( 'l j F Y', $start_ts );
+		$from = wp_date( 'H:i', $start_ts );
+		$to   = $end_ts ? wp_date( 'H:i', $end_ts ) : '';
+
+		if ( $to ) {
+			return $date . ', ' . $from . ' to ' . $to;
+		}
+
+		return $date . ', ' . $from;
+	}
+
 	public static function connect() {
 		if ( ! current_user_can( 'manage_options' ) || ! check_admin_referer( 'ebm_google_connect' ) ) {
 			wp_die( esc_html__( 'Permission denied.', 'electrical-booking-manager' ) );
@@ -466,6 +501,114 @@ final class EBM_Google {
 		return ! is_wp_error( self::get_event( $event_id ) );
 	}
 
+	private static function booking_addons_text( $booking ) {
+		global $wpdb;
+
+		if ( empty( $booking->addons_json ) ) {
+			return 'None';
+		}
+
+		$selected_addons = json_decode( (string) $booking->addons_json, true );
+
+		if ( ! is_array( $selected_addons ) || empty( $selected_addons ) ) {
+			return 'None';
+		}
+
+		$clean_addons = array();
+
+		foreach ( $selected_addons as $addon_id => $qty ) {
+			$addon_id = absint( $addon_id );
+			$qty      = absint( $qty );
+
+			if ( $addon_id && $qty > 0 ) {
+				$clean_addons[ $addon_id ] = $qty;
+			}
+		}
+
+		if ( empty( $clean_addons ) ) {
+			return 'None';
+		}
+
+		$addon_ids    = array_keys( $clean_addons );
+		$placeholders = implode( ',', array_fill( 0, count( $addon_ids ), '%d' ) );
+		$addons_table = EBM_Helpers::table( 'addons' );
+
+		$addons = $wpdb->get_results(
+			$wpdb->prepare(
+				"SELECT id, title, price, extra_duration_minutes, category
+				FROM $addons_table
+				WHERE id IN ($placeholders)
+				ORDER BY category ASC, sort_order ASC, title ASC",
+				$addon_ids
+			)
+		);
+
+		if ( empty( $addons ) ) {
+			return 'None';
+		}
+
+		$lines = array();
+
+		foreach ( $addons as $addon ) {
+			$qty = absint( $clean_addons[ (int) $addon->id ] ?? 0 );
+
+			if ( $qty < 1 ) {
+				continue;
+			}
+
+			$line = $qty . ' x ' . self::plain_text( $addon->title );
+
+			if ( isset( $addon->price ) ) {
+				$line .= ' - ' . self::money( $addon->price ) . ' each';
+			}
+
+			$lines[] = $line;
+		}
+
+		if ( empty( $lines ) ) {
+			return 'None';
+		}
+
+		return implode( "\n", $lines );
+	}
+
+	private static function booking_description( $booking, $booking_id ) {
+		$description = array();
+
+		$description[] = 'Created by Electrical Booking Manager';
+		$description[] = 'Booking ID: #' . absint( $booking_id );
+		$description[] = '';
+
+		$description[] = 'Customer';
+		$description[] = 'Customer: ' . self::plain_text( $booking->name ?? '' );
+		$description[] = 'Email: ' . self::plain_text( $booking->email ?? '' );
+		$description[] = 'Phone: ' . self::plain_text( $booking->phone ?? '' );
+		$description[] = '';
+
+		$description[] = 'Booking';
+		$description[] = 'Service: ' . self::plain_text( $booking->job_title ?? '' );
+		$description[] = 'Schedule: ' . self::schedule_line( $booking->start_at ?? '', $booking->end_at ?? '' );
+		$description[] = 'Status: ' . self::status_label( $booking->status ?? '' );
+		$description[] = '';
+
+		$description[] = 'Payment';
+		$description[] = 'Total: ' . self::money( $booking->total_amount ?? 0 );
+		$description[] = 'Deposit paid: ' . self::money( $booking->deposit_amount ?? 0 );
+		$description[] = 'Balance: ' . self::money( $booking->balance_amount ?? 0 );
+		$description[] = '';
+
+		$description[] = 'Add-ons';
+		$description[] = self::booking_addons_text( $booking );
+
+		if ( ! empty( $booking->address ) ) {
+			$description[] = '';
+			$description[] = 'Service address';
+			$description[] = self::plain_text( $booking->address );
+		}
+
+		return implode( "\n", $description );
+	}
+
 	public static function create_event( $booking_id ) {
 		global $wpdb;
 
@@ -504,8 +647,8 @@ final class EBM_Google {
 		}
 
 		$event = array(
-			'summary'     => 'Booking: ' . $booking->job_title,
-			'description' => "Created by Electrical Booking Manager\nBooking ID: {$booking_id}\n\nCustomer: {$booking->name}\nEmail: {$booking->email}\nPhone: {$booking->phone}\nAddress: {$booking->address}",
+			'summary'     => 'Booking: ' . self::plain_text( $booking->job_title ),
+			'description' => self::booking_description( $booking, $booking_id ),
 			'start'       => array(
 				'dateTime' => $start,
 				'timeZone' => self::google_timezone(),
