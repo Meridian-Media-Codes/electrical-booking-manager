@@ -17,7 +17,19 @@ final class EBM_Google {
 		return admin_url( 'admin-post.php?action=ebm_google_callback' );
 	}
 
+	public static function auth_mode() {
+		$mode = EBM_Settings::get( 'google_auth_mode', 'service_account' );
+
+		return in_array( $mode, array( 'service_account', 'oauth' ), true ) ? $mode : 'service_account';
+	}
+
 	public static function connected() {
+		if ( 'service_account' === self::auth_mode() ) {
+			$credentials = self::service_account_credentials();
+
+			return ! empty( $credentials['client_email'] ) && ! empty( $credentials['private_key'] );
+		}
+
 		return '' !== EBM_Settings::get( 'google_refresh_token', '' );
 	}
 
@@ -52,11 +64,15 @@ final class EBM_Google {
 		global $wpdb;
 
 		delete_transient( self::ACCESS_TOKEN_TRANSIENT );
+		delete_transient( self::ACCESS_TOKEN_TRANSIENT . '_oauth' );
+		delete_transient( self::ACCESS_TOKEN_TRANSIENT . '_service_account' );
 
 		$wpdb->query(
 			"DELETE FROM $wpdb->options
 			WHERE option_name LIKE '_transient_ebm_google_events_%'
-			OR option_name LIKE '_transient_timeout_ebm_google_events_%'"
+			OR option_name LIKE '_transient_timeout_ebm_google_events_%'
+			OR option_name LIKE '_transient_ebm_google_access_token_%'
+			OR option_name LIKE '_transient_timeout_ebm_google_access_token_%'"
 		);
 	}
 
@@ -119,6 +135,50 @@ final class EBM_Google {
 		}
 
 		return $date . ', ' . $from;
+	}
+
+	public static function service_account_credentials() {
+		$encrypted_json = EBM_Settings::get( 'google_service_account_json', '' );
+
+		if ( '' === $encrypted_json ) {
+			return array();
+		}
+
+		$json = EBM_Helpers::decrypt( $encrypted_json );
+
+		if ( '' === $json ) {
+			self::set_last_error( __( 'The saved Google service account JSON could not be decrypted.', 'electrical-booking-manager' ) );
+			return array();
+		}
+
+		$credentials = json_decode( $json, true );
+
+		if ( ! is_array( $credentials ) ) {
+			self::set_last_error( __( 'The saved Google service account JSON is invalid.', 'electrical-booking-manager' ) );
+			return array();
+		}
+
+		return $credentials;
+	}
+
+	public static function service_account_email() {
+		$credentials = self::service_account_credentials();
+
+		return sanitize_email( $credentials['client_email'] ?? '' );
+	}
+
+	private static function base64url_encode( $data ) {
+		return rtrim( strtr( base64_encode( $data ), '+/', '-_' ), '=' );
+	}
+
+	private static function access_token_transient_key() {
+		if ( 'service_account' === self::auth_mode() ) {
+			$email = self::service_account_email();
+
+			return self::ACCESS_TOKEN_TRANSIENT . '_service_account_' . md5( $email );
+		}
+
+		return self::ACCESS_TOKEN_TRANSIENT . '_oauth';
 	}
 
 	public static function connect() {
@@ -211,6 +271,7 @@ final class EBM_Google {
 
 		$settings = EBM_Settings::all();
 		$settings['google_refresh_token'] = EBM_Helpers::encrypt( sanitize_text_field( $body['refresh_token'] ) );
+		$settings['google_auth_mode']     = 'oauth';
 
 		update_option( EBM_Settings::OPTION, $settings, false );
 
@@ -227,7 +288,12 @@ final class EBM_Google {
 		}
 
 		$settings = EBM_Settings::all();
-		$settings['google_refresh_token'] = '';
+
+		if ( 'service_account' === self::auth_mode() ) {
+			$settings['google_service_account_json'] = '';
+		} else {
+			$settings['google_refresh_token'] = '';
+		}
 
 		update_option( EBM_Settings::OPTION, $settings, false );
 
@@ -239,11 +305,119 @@ final class EBM_Google {
 	}
 
 	private static function token( $force_refresh = false ) {
-		if ( $force_refresh ) {
-			delete_transient( self::ACCESS_TOKEN_TRANSIENT );
+		if ( 'service_account' === self::auth_mode() ) {
+			return self::service_account_token( $force_refresh );
 		}
 
-		$cached = get_transient( self::ACCESS_TOKEN_TRANSIENT );
+		return self::oauth_token( $force_refresh );
+	}
+
+	private static function service_account_token( $force_refresh = false ) {
+		$cache_key = self::access_token_transient_key();
+
+		if ( $force_refresh ) {
+			delete_transient( $cache_key );
+		}
+
+		$cached = get_transient( $cache_key );
+
+		if ( ! $force_refresh && $cached ) {
+			return $cached;
+		}
+
+		$credentials = self::service_account_credentials();
+
+		if ( empty( $credentials['client_email'] ) || empty( $credentials['private_key'] ) ) {
+			self::set_last_error( __( 'Google service account JSON is missing the client email or private key.', 'electrical-booking-manager' ) );
+			return '';
+		}
+
+		if ( ! function_exists( 'openssl_sign' ) ) {
+			self::set_last_error( __( 'The PHP OpenSSL extension is required for Google service account authentication.', 'electrical-booking-manager' ) );
+			return '';
+		}
+
+		$now = time();
+
+		$header = array(
+			'alg' => 'RS256',
+			'typ' => 'JWT',
+		);
+
+		$claim = array(
+			'iss'   => $credentials['client_email'],
+			'scope' => 'https://www.googleapis.com/auth/calendar',
+			'aud'   => 'https://oauth2.googleapis.com/token',
+			'iat'   => $now,
+			'exp'   => $now + 3600,
+		);
+
+		$jwt_header = self::base64url_encode( wp_json_encode( $header ) );
+		$jwt_claim  = self::base64url_encode( wp_json_encode( $claim ) );
+
+		$signing_input = $jwt_header . '.' . $jwt_claim;
+		$signature     = '';
+
+		$signed = openssl_sign(
+			$signing_input,
+			$signature,
+			$credentials['private_key'],
+			OPENSSL_ALGO_SHA256
+		);
+
+		if ( ! $signed ) {
+			self::set_last_error( __( 'The Google service account token could not be signed. Check the private key in the JSON file.', 'electrical-booking-manager' ) );
+			return '';
+		}
+
+		$assertion = $signing_input . '.' . self::base64url_encode( $signature );
+
+		$response = wp_remote_post(
+			'https://oauth2.googleapis.com/token',
+			array(
+				'timeout' => 20,
+				'body'    => array(
+					'grant_type' => 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+					'assertion'  => $assertion,
+				),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			self::set_last_error( $response->get_error_message() );
+			return '';
+		}
+
+		$body = json_decode( wp_remote_retrieve_body( $response ), true );
+
+		if ( wp_remote_retrieve_response_code( $response ) >= 400 || empty( $body['access_token'] ) ) {
+			$message = self::error_message(
+				$response,
+				__( 'Could not create a Google Calendar access token from the service account.', 'electrical-booking-manager' )
+			);
+
+			self::set_last_error( $message );
+
+			return '';
+		}
+
+		$access_token = sanitize_text_field( $body['access_token'] );
+		$expires_in   = max( 300, absint( $body['expires_in'] ?? 3600 ) - 120 );
+
+		set_transient( $cache_key, $access_token, $expires_in );
+		self::clear_last_error();
+
+		return $access_token;
+	}
+
+	private static function oauth_token( $force_refresh = false ) {
+		$cache_key = self::access_token_transient_key();
+
+		if ( $force_refresh ) {
+			delete_transient( $cache_key );
+		}
+
+		$cached = get_transient( $cache_key );
 
 		if ( ! $force_refresh && $cached ) {
 			return $cached;
@@ -290,7 +464,7 @@ final class EBM_Google {
 		$access_token = sanitize_text_field( $body['access_token'] );
 		$expires_in   = max( 300, absint( $body['expires_in'] ?? 3600 ) - 120 );
 
-		set_transient( self::ACCESS_TOKEN_TRANSIENT, $access_token, $expires_in );
+		set_transient( $cache_key, $access_token, $expires_in );
 		self::clear_last_error();
 
 		return $access_token;
@@ -324,7 +498,7 @@ final class EBM_Google {
 		if ( ! $token ) {
 			return new WP_Error(
 				'ebm_google_token',
-				__( 'Could not refresh the Google Calendar access token. Reconnect Google Calendar.', 'electrical-booking-manager' )
+				__( 'Could not get a Google Calendar access token. Check the Google Calendar connection settings.', 'electrical-booking-manager' )
 			);
 		}
 
@@ -356,7 +530,7 @@ final class EBM_Google {
 			if ( ! $fresh_token ) {
 				return new WP_Error(
 					'ebm_google_token',
-					__( 'Google Calendar rejected the saved token. Reconnect Google Calendar.', 'electrical-booking-manager' )
+					__( 'Google Calendar rejected the saved connection. Check the Google Calendar settings.', 'electrical-booking-manager' )
 				);
 			}
 
@@ -381,6 +555,108 @@ final class EBM_Google {
 		}
 
 		return $response;
+	}
+
+	public static function shared_calendars() {
+		if ( ! self::connected() ) {
+			return new WP_Error(
+				'ebm_google_not_connected',
+				__( 'Google Calendar is not connected.', 'electrical-booking-manager' )
+			);
+		}
+
+		$url = add_query_arg(
+			array(
+				'minAccessRole' => 'reader',
+				'showHidden'    => 'true',
+			),
+			'https://www.googleapis.com/calendar/v3/users/me/calendarList'
+		);
+
+		$response = self::google_request( 'GET', $url, null, 20 );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
+			return new WP_Error(
+				'ebm_google_calendar_list',
+				self::error_message(
+					$response,
+					__( 'Google shared calendars could not be loaded.', 'electrical-booking-manager' )
+				)
+			);
+		}
+
+		$body      = json_decode( wp_remote_retrieve_body( $response ), true );
+		$calendars = array();
+
+		foreach ( (array) ( $body['items'] ?? array() ) as $item ) {
+			$id          = sanitize_text_field( $item['id'] ?? '' );
+			$summary     = sanitize_text_field( $item['summary'] ?? '' );
+			$access_role = sanitize_text_field( $item['accessRole'] ?? '' );
+
+			if ( '' === $id ) {
+				continue;
+			}
+
+			$calendars[] = array(
+				'id'          => $id,
+				'summary'     => $summary ?: $id,
+				'access_role' => $access_role,
+				'primary'     => ! empty( $item['primary'] ),
+				'can_write'   => in_array( $access_role, array( 'writer', 'owner' ), true ),
+			);
+		}
+
+		return $calendars;
+	}
+
+	public static function test_saved_calendar() {
+		if ( ! self::connected() ) {
+			return new WP_Error(
+				'ebm_google_not_connected',
+				__( 'Google Calendar is not connected.', 'electrical-booking-manager' )
+			);
+		}
+
+		$calendar_id = EBM_Settings::get( 'google_calendar_id', '' );
+
+		if ( '' === $calendar_id || 'primary' === $calendar_id ) {
+			return new WP_Error(
+				'ebm_google_missing_calendar_id',
+				__( 'Select a shared Google Calendar before testing.', 'electrical-booking-manager' )
+			);
+		}
+
+		$url = add_query_arg(
+			array(
+				'maxResults'   => 1,
+				'singleEvents' => 'true',
+				'orderBy'      => 'startTime',
+				'timeMin'      => gmdate( 'Y-m-d\TH:i:s\Z' ),
+			),
+			'https://www.googleapis.com/calendar/v3/calendars/' . rawurlencode( $calendar_id ) . '/events'
+		);
+
+		$response = self::google_request( 'GET', $url, null, 20 );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		if ( wp_remote_retrieve_response_code( $response ) >= 400 ) {
+			return new WP_Error(
+				'ebm_google_calendar_test',
+				self::error_message(
+					$response,
+					__( 'The selected Google Calendar could not be tested.', 'electrical-booking-manager' )
+				)
+			);
+		}
+
+		return true;
 	}
 
 	public static function events( $time_min, $time_max ) {

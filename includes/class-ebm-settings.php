@@ -23,10 +23,12 @@ final class EBM_Settings {
 			'stripe_secret_key'        => '',
 			'stripe_webhook_secret'    => '',
 
-			'google_client_id'         => '',
-			'google_client_secret'     => '',
-			'google_calendar_id'       => 'primary',
-			'google_refresh_token'     => '',
+			'google_client_id'              => '',
+			'google_client_secret'          => '',
+			'google_calendar_id'            => 'primary',
+			'google_refresh_token'          => '',
+			'google_auth_mode'              => 'service_account',
+			'google_service_account_json'   => '',
 
 			'google_places_api_key'    => '',
 			'allowed_postcode_prefixes'=> 'FY',
@@ -96,6 +98,23 @@ final class EBM_Settings {
 		$current['google_client_id']      = sanitize_text_field( $raw['google_client_id'] ?? '' );
 		$current['google_calendar_id']    = sanitize_text_field( $raw['google_calendar_id'] ?? 'primary' );
 		$current['google_places_api_key'] = sanitize_text_field( $raw['google_places_api_key'] ?? '' );
+
+		$auth_mode = sanitize_key( $raw['google_auth_mode'] ?? 'service_account' );
+		$current['google_auth_mode'] = in_array( $auth_mode, array( 'service_account', 'oauth' ), true ) ? $auth_mode : 'service_account';
+
+		if ( ! empty( $raw['google_service_account_clear'] ) ) {
+			$current['google_service_account_json'] = '';
+		}
+
+		$service_account_json = trim( (string) ( $raw['google_service_account_json'] ?? '' ) );
+
+		if ( '' !== $service_account_json ) {
+			$decoded = json_decode( $service_account_json, true );
+
+			if ( is_array( $decoded ) && ! empty( $decoded['client_email'] ) && ! empty( $decoded['private_key'] ) ) {
+				$current['google_service_account_json'] = EBM_Helpers::encrypt( $service_account_json );
+			}
+		}
 
 		$allowed_postcode_prefixes = strtoupper( sanitize_text_field( $raw['allowed_postcode_prefixes'] ?? 'FY' ) );
 		$allowed_postcode_prefixes = preg_replace( '/[^A-Z0-9,\s]/', '', $allowed_postcode_prefixes );
