@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Electrical Booking Manager
  * Description: Secure electrical services booking system with add-ons, Google Calendar blocking, Stripe deposits, reminders, discounts, and multi-day scheduling.
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Meridian Media
  * Text Domain: electrical-booking-manager
  */
@@ -11,7 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EBM_VERSION', '1.1.1' );
+define( 'EBM_VERSION', '1.1.2' );
 define( 'EBM_FILE', __FILE__ );
 define( 'EBM_DIR', plugin_dir_path( __FILE__ ) );
 define( 'EBM_URL', plugin_dir_url( __FILE__ ) );
@@ -22,6 +22,7 @@ $ebm_core_files = array(
 	'settings',
 	'scheduler',
 	'google',
+	'health',
 	'stripe',
 	'emails',
 	'discounts',
